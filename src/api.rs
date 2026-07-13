@@ -6,8 +6,10 @@ use pgrx::prelude::*;
 use pgrx::{InOutFuncs, StringInfo};
 use serde::{Deserialize, Serialize};
 use std::ffi::CStr;
-use crate::movement::Move;
 use crate::game::{ChessGame, GameStatus};
+use crate::movement::{Move, MoveFlags};
+use crate::types::Color;
+use pgrx::iter::TableIterator;
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType)]
@@ -227,6 +229,90 @@ fn chess_game_hash(game: chess_game) -> i64 {
     game.0.current_position().zobrist_hash() as i64
 }
 
+#[pg_extern]
+fn chess_in_check(position: chess_position) -> bool {
+    let side = position.0.side_to_move;
+    position.0.is_in_check(side)
+}
+
+#[pg_extern]
+fn chess_is_checkmate(position: chess_position) -> bool {
+    position.0.is_checkmate()
+}
+
+#[pg_extern]
+fn chess_is_stalemate(position: chess_position) -> bool {
+    position.0.is_stalemate()
+}
+
+#[pg_extern]
+fn chess_legal_move_count(position: chess_position) -> i32 {
+    position.0.legal_moves().len() as i32
+}
+
+#[pg_extern]
+fn chess_apply_move(position: chess_position, uci: &str) -> chess_position {
+    let mv = match Move::from_uci(uci) {
+        Ok(m) => m,
+        Err(e) => error!("invalid UCI move '{}': {}", uci, e),
+    };
+    match position.0.apply_move(mv) {
+        Ok(next) => chess_position(next),
+        Err(_) => error!("illegal move '{}' in this position", uci),
+    }
+}
+
+#[pg_extern]
+fn chess_position_hash(position: chess_position) -> i64 {
+    position.0.zobrist_hash() as i64
+}
+
+#[pg_extern]
+fn chess_legal_moves(
+    position: chess_position
+) -> TableIterator<
+    'static,
+    (
+        name!(uci, String),
+        name!(from_square, String),
+        name!(to_square, String),
+        name!(is_capture, bool),
+        name!(is_promotion, bool),
+        name!(is_castle, bool),
+        name!(is_en_passant, bool),
+    ),
+> {
+    let rows: Vec<_> = position.0
+        .legal_moves()
+        .into_iter()
+        .map(|m| {
+            (
+                m.to_uci(),
+                m.from.to_algebraic(),
+                m.to.to_algebraic(),
+                m.flags.contains(MoveFlags::CAPTURE),
+                m.flags.contains(MoveFlags::PROMOTION),
+                m.flags.contains(MoveFlags::KING_CASTLE) || m.flags.contains(MoveFlags::QUEEN_CASTLE),
+                m.flags.contains(MoveFlags::EN_PASSANT),
+            )
+        })
+        .collect();
+    TableIterator::new(rows)
+}
+
+#[pg_extern]
+fn chess_game_moves(
+    game: chess_game
+) -> TableIterator<'static, (name!(ply, i32), name!(uci, String),)> {
+    let rows: Vec<_> = game.0
+        .moves
+        .iter()
+        .enumerate()
+        .map(|(i, m)| ((i + 1) as i32, m.to_uci()))
+        .collect();
+    TableIterator::new(rows)
+}
+
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
@@ -393,5 +479,84 @@ mod tests {
         .expect("SPI failed")
         .expect("NULL");
         assert_eq!(ply, 2);
+    }
+
+    #[pg_test]
+    fn legal_moves_startpos_is_20() {
+        let n = Spi::get_one::<i64>(
+            "SELECT count(*) FROM chess_legal_moves(chess_start_position())",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(n, 20);
+    }
+
+    #[pg_test]
+    fn legal_moves_has_expected_columns() {
+        // The e2e4 double push should be present and flagged non-capture.
+        let is_cap = Spi::get_one::<bool>(
+            "SELECT is_capture FROM chess_legal_moves(chess_start_position()) \
+             WHERE uci = 'e2e4'",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(is_cap, false);
+    }
+
+    #[pg_test]
+    fn checkmate_detected_via_sql() {
+        // Fool's-mate-ish back-rank mate position, black to move and mated.
+        let mated = Spi::get_one::<bool>(
+            "SELECT chess_is_checkmate(chess_from_fen('4R1k1/5ppp/8/8/8/8/8/6K1 b - - 0 1'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(mated);
+    }
+
+    #[pg_test]
+    fn in_check_detected_via_sql() {
+        let checked = Spi::get_one::<bool>(
+            "SELECT chess_in_check(chess_from_fen('4r3/8/8/8/8/8/8/4K3 w - - 0 1'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(checked);
+    }
+
+    #[pg_test]
+    fn apply_move_via_sql() {
+        let fen = Spi::get_one::<String>(
+            "SELECT chess_to_fen(chess_apply_move(chess_start_position(), 'e2e4'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(fen.starts_with("rnbqkbnr/pppppppp/8/8/4P3"));
+    }
+
+    #[pg_test]
+    fn count_captures_in_a_tactical_position() {
+        // A position with a couple of available captures; verify we can filter.
+        let caps = Spi::get_one::<i64>(
+            "SELECT count(*) FROM chess_legal_moves( \
+                chess_from_fen('4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1')) \
+             WHERE is_capture",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        // White pawn e4 can capture d5. That's the one capture.
+        assert_eq!(caps, 1);
+    }
+
+    #[pg_test]
+    fn game_moves_lists_plies() {
+        let last_uci = Spi::get_one::<String>(
+            "SELECT uci FROM chess_game_moves( \
+                chess_play(chess_play(chess_new_game(),'e2e4'),'e7e5')) \
+             ORDER BY ply DESC LIMIT 1",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(last_uci, "e7e5");
     }
 }
