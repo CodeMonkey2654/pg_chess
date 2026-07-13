@@ -6,7 +6,7 @@
 //! SAN is Contextual: e4 -> Nf3 -> Nbd2 -> O-O -> exd8=Q+
 //! SAN will also need a position
 
-use crate::{board::Square, movement::MoveParseError::InconsistentPromotionFlag};
+use crate::{board::Square};
 use crate::types::PieceKind;
 use serde::{Serialize, Deserialize};
 use std::fmt;

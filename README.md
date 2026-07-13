@@ -1,21 +1,119 @@
 # pg_chess
 
-A PosgreSQL extension that contains chess analysis written in rust so I can learn how PG extensions work under the hood. 
+`pg_chess` is a PostgreSQL extension written in Rust with [`pgrx`](https://github.com/pgcentralfoundation/pgrx). It introduces chess-specific PostgreSQL types and functions backed by a chess domain model in Rust.
 
-## Phases
-1. Base Chunks - Color, PieceKind, Piece, value and char conversions
-2. Board - Square index representation of the board using little endian rank file
-    a. Square
-    b. Board
-3. Fen Position class 
+The project is under active development. The current implementation is focused on foundation representations and text formats:
+- pieces, colors, and types of pieces (piece kinds)
+- squares using Little-Endian Rank-File indexing
+- A 64 square mailbox board
+- complete chess positions represented using [FEN](https://en.wikipedia.org/wiki/Forsyth%E2%80%93Edwards_Notation)
+- Chess moves represented using [UCI Notation](https://en.wikipedia.org/wiki/Universal_Chess_Interface)
+- PostgreSQL custom types for positions and moves
+- SQL helpers for constructing and inspecting those values
+
+## Status
+
+Current Version: Pre-Alpha
+
+The extension currently provides or plan to provides before calling v0.1.0:
+
+| Capability | Status |
+| ---------- | ------ |
+| Piece and Color Types | Implemented |
+| Algebraic square parsing and formatting | Implemented |
+| Mailbox board representation | Implemented |
+| Starting board construction | Implemented |
+| FEN Parsing and Formatting | Implemented |
+| PostgreSQL `chess_position` type | Implemented |
+| UCI Move Parsing and Formatting | Implemented |
+| PostgreSQL `chess_move` type | Implemented |
+| Move flags | Partially implemented |
+| Move application | Not implemented |
+| Pseudo-legal move generation | Not implemented |
+| Legal move generation | Not implemented |
+| Check and Checkmate Detection | Not implemented |
+| SAN Support | Not implemented |
+| PGN support | Not implemented |
+| Game model | Not implemented |
+| Full PG API | Not implemented |
+| Operators + operator classes | Not implemented |
+| Indexes + Optimizations | Not implemented |
 
 
-## Next steps
-1. Move Type + UCI/SAN -The chess_move type. Move struct (from-square, to-square, promotion, flags), parse/emit UCI (e2e4, e7e8q), and the storable SQL type. Foundation for everything move-related.
-2. Pseudo-legal move generation - Per-piece move generation (pawn pushes/captures, knight, bishop, rook, queen, king) without check filtering yet. This is where the mailbox board earns its keep — you'll see the chess logic clearly.
-3. Apply move and game state machine - The chess_game type holding a position plus full move history. apply_move (reject illegal moves), update clocks/castling/en-passant, detect draws (50-move, threefold repetition).
-4. The full set of #[pg_extern] functions Postgres calls: chess_legal_moves, chess_apply_move, chess_in_check, chess_is_checkmate, chess_game_from_pgn, etc. Set-returning functions for legal moves.
-5. Chunk 11 — Operators + operator classes
-Custom SQL operators (=, @> "position contains"), plus btree/hash operator classes so the types can be compared, sorted, and used as index keys. This is the PostgresEq/PostgresOrd/PostgresHash work.
-6. Chunk 12 — Indexes + optimization
-The payoff for a database-native engine: Zobrist hashing for fast position identity, expression indexes, a GIN index for "positions containing piece X on square Y" queries, and the optional bitboard layer for move-gen speed. Where the mailbox-vs-bitboard door I left open gets used.
+## Notation Validity vs Chess Legality
+
+The extension distinguishes whether a notation is properly formatted (Notation Validity) from whether the mvoe is legal in chess (Chess Legality).
+
+For example:
+```sql
+SELECT chess_is_valid_uci('e2e4');
+```
+
+returns `true` because `e2e4` is properly formatted UCI. It doesn't show that:
+- a piece exists on `e2`
+- that piece belongs to the side to move
+- the piece can move to `e4`
+- the move leaves its king safe
+
+This also extends to `chess_is_valid_fen`, which currently checks whether the input can be parsed by the extension. It doesn't show that the represented position could occur in a legal chess game.
+
+## Quick Start
+
+### Pre-reqs
+
+You need:
+- Rust and Cargo
+- A supproted PostgreSQL installation
+- `cargo-pgrx`
+- the PostgreSQL development files requried by `pgrx`
+
+Install `cargo-pgrx`:
+
+```bash
+cargo install --locked cargo-pgrx
+```
+
+Initialize `pgrx` against your PostgreSQL installation:
+
+```bash
+cargo pgrx init
+```
+
+Run the extention in a development PostgreSQL instance:
+
+```bash
+cargo pgrx run
+```
+
+Run tests:
+
+```bash
+cargo test
+cargo pgrx test
+```
+
+Run formatting and lint checks:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+The exact PG versions supported should be from `Cargo.toml` and the local cargo-pgrx config.
+
+## Architecture
+
+The repository is divided into a `pgrx` adapter layer and a chess domain model. The domain model represents chess and notation parsing. The SQL layer owns PG type integration, functions, and conversion of Rust errors into PostgreSQL errors. 
+
+There are other docs that I may or may not write you can read in the docs folder if you're curious.
+
+## Design principles
+
+- Keep PostgreSQL layer thin
+- Make invariants explicit
+- Separate intrinsic and contextual move data (move has squares, and promotion piece, everything else come from the position)
+- For Now - prefer correctness over optimization (Mailbox over bitmap for instance)
+
+
+## Stability
+There is none yet ;)

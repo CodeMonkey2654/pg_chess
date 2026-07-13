@@ -6,6 +6,7 @@ mod types;
 mod board;
 mod fen;
 mod movement;
+mod movegen;
 mod game;
 mod api;
 
