@@ -7,6 +7,7 @@ use pgrx::{InOutFuncs, StringInfo};
 use serde::{Deserialize, Serialize};
 use std::ffi::CStr;
 use crate::movement::Move;
+use crate::game::{ChessGame, GameStatus};
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType)]
@@ -63,6 +64,51 @@ impl InOutFuncs for chess_move {
         buffer.push_str(&self.0.to_uci());
     }
 }
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType)]
+#[inoutfuncs]
+pub struct chess_game(pub ChessGame);
+
+impl InOutFuncs for chess_game {
+    fn input(input: &CStr) -> Self {
+        let s = input
+            .to_str()
+            .unwrap_or_else(|_| error!("chess_game input was not valid UTF-8"));
+
+        match parse_game_text(s) {
+            Some(g) => chess_game(g),
+            None => error!("invalid chess_game text: '{}'", s),
+        }
+    }
+
+    fn output(&self, buffer: &mut StringInfo) {
+        buffer.push_str(&game_to_text(&self.0));
+    }
+}
+
+fn parse_game_text(s: &str) -> Option<ChessGame> {
+    let (fen_part, moves_part) = match s.split_once('|') {
+        Some((a, b)) => (a.trim(), b.trim()),
+        None => (s.trim(), ""), // allow a bare FEN with no moves
+    };
+    let start = Position::from_fen(fen_part)?;
+    let mut game = ChessGame::from_position(start);
+    for token in moves_part.split_whitespace() {
+        let m = Move::from_uci(token).ok()?;
+        game.play(m).ok()?;
+    }
+    Some(game)
+}
+
+fn game_to_text(g: &ChessGame) -> String {
+    let mut s = g.start.to_fen();
+    s.push_str("  |  ");
+    let ucis: Vec<String> = g.moves.iter().map(|m| m.to_uci()).collect();
+    s.push_str(&ucis.join(" "));
+    s
+}
+
 
 #[pg_extern]
 fn chess_start_position() -> chess_position {
@@ -135,7 +181,51 @@ fn chess_move_promotion(mv: chess_move) -> Option<String> {
         .map(|piece| piece.to_char().to_string())
 }
 
+#[pg_extern]
+fn chess_new_game() -> chess_game {
+    chess_game(ChessGame::new())
+}
 
+#[pg_extern]
+fn chess_play(game: chess_game, uci: &str) -> chess_game {
+    let mv = match Move::from_uci(uci) {
+        Ok(m) => m,
+        Err(e) => error!("invalid UCI move '{}': {}", uci, e),
+    };
+    let mut g = game.0;
+    if g.play(mv).is_err() {
+        error!("illegal move '{}' in this position", uci);
+    }
+    chess_game(g)
+}
+
+#[pg_extern]
+fn chess_game_fen(game: chess_game) -> String {
+    game.0.current_position().to_fen()
+}
+
+#[pg_extern]
+fn chess_game_ply(game: chess_game) -> i32 {
+    game.0.moves.len() as i32
+}
+
+#[pg_extern]
+fn chess_game_status(game: chess_game) -> String {
+    match game.0.status() {
+        GameStatus::Ongoing => "ongoing",
+        GameStatus::Checkmate => "checkmate",
+        GameStatus::Stalemate => "stalemate",
+        GameStatus::FiftyMoveDraw => "fifty_move_draw",
+        GameStatus::ThreefoldRepetition => "threefold_repetition",
+        GameStatus::InsufficientMaterial => "insufficient_material"
+    }
+    .to_string()
+}
+
+#[pg_extern]
+fn chess_game_hash(game: chess_game) -> i64 {
+    game.0.current_position().zobrist_hash() as i64
+}
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
@@ -263,5 +353,45 @@ mod tests {
         assert!(!crate::api::chess_is_valid_uci("not-a-move"));
         assert!(!crate::api::chess_is_valid_uci("e2e9"));
         assert!(!crate::api::chess_is_valid_uci("e7e8k"));
+    }
+
+    #[pg_test]
+    fn game_plays_and_reports_fen() {
+        let fen = Spi::get_one::<String>(
+            "SELECT chess_game_fen(chess_play(chess_play(chess_new_game(),'e2e4'),'e7e5'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(fen.starts_with("rnbqkbnr/pppp1ppp/8/4p3/4P3"));
+    }
+
+    #[pg_test]
+    fn game_text_roundtrips() {
+        let ply = Spi::get_one::<i32>(
+            "SELECT chess_game_ply(chess_play(chess_new_game(),'e2e4'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(ply, 1);
+    }
+
+    #[pg_test]
+    fn illegal_move_errors() {
+        let result = std::panic::catch_unwind(|| {
+            Spi::get_one::<String>(
+                "SELECT chess_game_fen(chess_play(chess_new_game(),'e2e5'))",
+            )
+        });
+        assert!(result.is_err(), "illegal move should raise an error");
+    }
+
+    #[pg_test]
+    fn game_ply_counts() {
+        let ply = Spi::get_one::<i32>(
+            "SELECT chess_game_ply(chess_play(chess_play(chess_new_game(),'e2e4'),'e7e5'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(ply, 2);
     }
 }
