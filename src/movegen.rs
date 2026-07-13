@@ -1,6 +1,6 @@
 use crate::board::{Board, Square};
 use crate::fen::Position;
-use crate::types::{Color, PieceKind};
+use crate::types::{Color, PieceKind, Piece};
 use crate::movement::{Move, MoveFlags};
 
 /// Move offsets using signed deltas and bounds-checked Square. Prevents wrap from a-h file
@@ -60,13 +60,6 @@ impl Position{
     }
 
     pub fn push_pawn_moves(&self, from: Square, color: Color, out: &mut Vec<Move>) {
-        // Rules:
-        // - white pawns move up, black down
-        // - pawns have a rank where double push is an option
-        // - promotion is available for 1 rank per color
-        // - pieces ahead have to be empty
-        // - diagonal capture is available
-        // - shoulder to shoulder is avilable
         let forward: i8 = match color {
             Color::White => 1,
             Color::Black => -1,
@@ -110,7 +103,7 @@ impl Position{
 
             // Normal caps
             if let Some(p) = self.board.get(to) {
-                if p.color != color {
+                if p.color != color && p.kind != PieceKind::King {
                     if is_promotion {
                         let mut flags = MoveFlags::NONE;
                         flags.insert(MoveFlags::PROMOTION);
@@ -249,11 +242,11 @@ impl Position {
         let mut b = self.board.clone();
         let mover = b.get(m.from).expect("move.from MUST hold a piece");
 
-        b.set(m.from, None);
+        b.clear(m.from);
 
         if m.flags.contains(MoveFlags::EN_PASSANT) {
             if let Some(capture_sq) = Square::from_file_rank(m.to.file(), m.from.rank()) {
-                b.set(capture_sq, None);
+                b.clear(capture_sq);
             }
         }
 
@@ -261,7 +254,7 @@ impl Position {
             Some(kind) => Piece { color: mover.color, kind },
             None => mover,
         };
-        b.set(m.to, Some(placed));
+        b.set(m.to, Some(placed).expect("piece placement is known"));
 
         // Castling
         if m.flags.contains(MoveFlags::KING_CASTLE) {
@@ -272,8 +265,8 @@ impl Position {
                 Square::from_file_rank(5, rank), // f-file
             ) {
                 let rook = b.get(rook_from);
-                b.set(rook_from, None);
-                b.set(rook_to, rook);
+                b.clear(rook_from);
+                b.set(rook_to, rook.expect("Rook is already declared and should NEVER be None"));
             }
 
         } else if m.flags.contains(MoveFlags::QUEEN_CASTLE) {
@@ -283,8 +276,8 @@ impl Position {
                 Square::from_file_rank(3, rank), // d-file
             ) {
                 let rook = b.get(rook_from);
-                b.set(rook_from, None);
-                b.set(rook_to, rook.un);
+                b.clear(rook_from);
+                b.set(rook_to, rook.expect("Rook is already declared and should NEVER be None"));
             }
         }
 
@@ -299,7 +292,7 @@ impl Position {
         let king_sq = match Square::from_file_rank(4, rank) { Some(s) => s, None => return };
 
         match self.board.get(king_sq) {
-            Some(p) => if p.color == us && p.kind == PieceKind::King => {}
+            Some(p) if p.color == us && p.kind == PieceKind::King => {}
             _ => return,
         }
         if self.board.is_square_attacked(king_sq, them) {
@@ -307,7 +300,7 @@ impl Position {
         }
         let (king_right, queen_right) = match us {
             Color::White => (self.castling.white_kingside, self.castling.white_queenside),
-            Color::Black => (self.castling.black_kingside, self.castling.white_queenside),
+            Color::Black => (self.castling.black_kingside, self.castling.black_queenside),
         };
         // Kingside
         if king_right {
@@ -347,11 +340,11 @@ impl Position {
             .filter(|&m| {
                 let after = self.board_after(m);
                 match after.king_square(us) {
-                    Some(k) = after.is_square_attacked(k, us.flip()),
+                    Some(k) => !after.is_square_attacked(k, us.flip()),
                     None => true, //kingless test positions: no filter plz
                 }
             })
-            .collect();
+            .collect()
     }
 
     pub fn is_checkmate(&self) -> bool {
