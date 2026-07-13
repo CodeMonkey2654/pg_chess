@@ -1,54 +1,65 @@
 ﻿# SQL API
 
-The public SQL interface is small and centered around a few helpers.
+The public SQL interface is small and centered around a few helpers. Pure functions are marked `IMMUTABLE` and `PARALLEL SAFE`.
 
 ## Position functions
 
-- `chess_start_position() -> chess_position`
-- `chess_from_fen(fen text) -> chess_position`
-- `chess_to_fen(position chess_position) -> text`
-- `chess_side_to_move(position chess_position) -> text`
-- `chess_is_valid_fen(fen text) -> boolean`
-- `chess_in_check(position chess_position) -> boolean`
-- `chess_is_checkmate(position chess_position) -> boolean`
-- `chess_is_stalemate(position chess_position) -> boolean`
-- `chess_apply_move(position chess_position, uci text) -> chess_position`
-- `chess_legal_move_count(position chess_position) -> integer`
-- `chess_legal_moves(position chess_position) -> setof record`
-- `chess_placement(position chess_position) -> text[]`
+| Function | Volatility |
+|----------|------------|
+| `chess_start_position()` | IMMUTABLE |
+| `chess_from_fen(fen text)` | IMMUTABLE (strict semantic validation) |
+| `chess_to_fen(position)` | IMMUTABLE |
+| `chess_is_valid_fen(fen text)` | IMMUTABLE (strict) |
+| `chess_fen_error(fen text)` | IMMUTABLE |
+| `chess_side_to_move(position)` | IMMUTABLE |
+| `chess_in_check(position)` | IMMUTABLE |
+| `chess_is_checkmate(position)` | IMMUTABLE |
+| `chess_is_stalemate(position)` | IMMUTABLE |
+| `chess_apply_move(position, uci)` | IMMUTABLE |
+| `chess_apply_san(position, san)` | IMMUTABLE |
+| `chess_legal_move_count(position)` | IMMUTABLE |
+| `chess_legal_moves(position)` | IMMUTABLE |
+| `chess_placement(position)` | IMMUTABLE |
 
 ## Move functions
 
-- `chess_is_valid_uci(uci text) -> boolean`
-- `chess_move_from_uci(uci text) -> chess_move`
-- `chess_move_to_uci(move chess_move) -> text`
-- `chess_move_from_square(move chess_move) -> text`
-- `chess_move_to_square(move chess_move) -> text`
-- `chess_move_promotion(move chess_move) -> text`
+| Function | Volatility |
+|----------|------------|
+| `chess_is_valid_uci(uci)` | IMMUTABLE |
+| `chess_move_from_uci(uci)` | IMMUTABLE |
+| `chess_move_to_uci(move)` | IMMUTABLE |
+| `chess_move_to_san(position, move)` | IMMUTABLE |
+| `chess_move_from_square(move)` | IMMUTABLE |
+| `chess_move_to_square(move)` | IMMUTABLE |
+| `chess_move_promotion(move)` | IMMUTABLE |
 
 ## Game functions
 
-- `chess_new_game() -> chess_game`
-- `chess_play(game chess_game, uci text) -> chess_game`
-- `chess_game_fen(game chess_game) -> text`
-- `chess_game_ply(game chess_game) -> integer`
-- `chess_game_status(game chess_game) -> text`
-- `chess_game_moves(game chess_game) -> setof record`
-- `chess_game_positions(game chess_game) -> setof record`
+| Function | Volatility |
+|----------|------------|
+| `chess_new_game()` | IMMUTABLE |
+| `chess_play(game, uci)` | IMMUTABLE |
+| `chess_from_pgn(text)` | IMMUTABLE |
+| `chess_to_pgn(game)` | IMMUTABLE |
+| `chess_game_fen(game)` | IMMUTABLE |
+| `chess_game_ply(game)` | IMMUTABLE |
+| `chess_game_status(game)` | IMMUTABLE |
+| `chess_game_moves(game)` | IMMUTABLE |
+| `chess_game_positions(game)` | IMMUTABLE |
 
 ## Example queries
 
 ```sql
 SELECT chess_to_fen(chess_start_position());
 
-SELECT chess_to_fen(chess_apply_move(chess_start_position(), 'e2e4'));
+SELECT chess_to_fen(chess_apply_san(chess_start_position(), 'e4'));
+
+SELECT chess_game_ply(chess_from_pgn('[Event "?"]\n\n1. e4 e5 *'));
 
 SELECT count(*) FROM chess_legal_moves(chess_start_position());
-
-SELECT chess_game_fen(chess_play(chess_play(chess_new_game(), 'e2e4'), 'e7e5'));
 ```
 
 ## Notes
 
-- `chess_is_valid_uci` and `chess_is_valid_fen` only check that the notation is well-formed.
+- `chess_is_valid_fen` and `chess_from_fen` apply strict semantic validation (kings, pawn placement, check state, castling/EP consistency).
 - Illegal moves error out when applied through the SQL helpers.

@@ -1,37 +1,24 @@
-# pg_chess
+# pg_chess / gambit-db
 
-pg_chess is a small PostgreSQL extension for working with chess positions, moves, and simple games directly in SQL. It is implemented in Rust with pgrx and exposes custom PostgreSQL types plus helper functions.
+Chess positions, moves, and games for PostgreSQL — powered by the **gambit-db** Rust engine.
 
-## What it currently supports
+## Workspace
 
-- FEN parsing and formatting for chess positions
-- UCI parsing and formatting for moves
-- Custom SQL types: `chess_position`, `chess_move`, and `chess_game`
-- Legal move generation from a position
-- Move application and simple game tracking
+| Crate | Role |
+|-------|------|
+| [`gambit-db`](crates/gambit-db/) | Core chess engine (`cargo add gambit-db`) |
+| [`gambit-ingest`](crates/gambit-ingest/) | Bulk PGN ingest CLI (`gambit-ingest import`) |
+| [`pg_chess`](crates/pg_chess/) | PostgreSQL extension (`CREATE EXTENSION pg_chess`) |
 
-## Status
+SQL types and functions use chess-native naming: `chess_position`, `chess_to_fen()`, `chess_legal_moves()`, etc.
 
-This project is still pre-alpha. The core model is working, but features such as SAN/PGN support, richer game analysis, and broader polish are still pending.
-
-## Quick start
-
-### Prerequisites
-
-- Rust and Cargo
-- A supported PostgreSQL installation
-- `cargo-pgrx`
-- The PostgreSQL development files required by pgrx
-
-### Install and run
+## Quick start (PostgreSQL)
 
 ```bash
 cargo install --locked cargo-pgrx
-cargo pgrx init
-cargo pgrx run
+cargo pgrx init --pg18 download
+cargo pgrx run pg18 -p pg_chess
 ```
-
-### Try it in SQL
 
 ```sql
 SELECT chess_to_fen(chess_start_position());
@@ -39,16 +26,35 @@ SELECT chess_to_fen(chess_apply_move(chess_start_position(), 'e2e4'));
 SELECT count(*) FROM chess_legal_moves(chess_start_position());
 ```
 
-## Notes
-
-- `chess_is_valid_fen` and `chess_is_valid_uci` check formatting and parsing, not full chess legality.
-- Applying an illegal move through SQL helpers raises an error.
-- See the docs in the docs directory for a compact overview of the data model and SQL API.
-
 ## Development
 
-```bash
-cargo test
-cargo pgrx test
-cargo fmt --check
+```powershell
+# Full quality gates (fmt, clippy, tests, perft)
+.\scripts\check.ps1
+
+# Individual tasks
+.\scripts\perft.ps1
+.\scripts\bench.ps1
+.\scripts\pgrx_test.ps1
 ```
+
+```bash
+# Linux / CI
+bash scripts/check.sh
+```
+
+### Rust library only
+
+```bash
+cargo test -p gambit-db
+cargo test -p gambit-db --test perft
+cargo bench -p gambit-db
+```
+
+## Status
+
+Production foundation: workspace split, perft correctness suite, criterion benchmarks with CI regression gates, SAN/PGN, strict FEN, bulk ingest (`gambit-ingest`), Python bindings (`gambit-py`), and UCI wrapper (`gambit-uci`). See `docs/` for architecture, SQL API, [ingest guide](docs/ingest.md), and the [roadmap](roadmap.md).
+
+### Benchmark regression budget
+
+After performance changes, run `.\scripts\bench_gate.ps1` (or `bash scripts/bench_gate.sh`). CI fails if any benchmark's lower-bound change vs the committed `phase2` baseline exceeds 5%.

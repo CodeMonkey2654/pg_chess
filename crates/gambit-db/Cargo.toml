@@ -1,0 +1,43 @@
+[package]
+name = "gambit-db"
+version = "0.1.0"
+edition = "2021"
+description = "Chess engine: board, FEN, movegen, SAN, PGN, Zobrist hashing"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/CodeMonkey2654/pg_chess"
+documentation = "https://docs.rs/gambit-db"
+keywords = ["chess", "fen", "pgn", "movegen", "san"]
+categories = ["game-development", "parser-implementations"]
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "allow", priority = -1 }
+unwrap_used = "deny"
+expect_used = "allow"
+
+[features]
+default = []
+tablebase = ["dep:shakmaty-syzygy", "dep:shakmaty"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive", "alloc"] }
+thiserror = "2"
+shakmaty-syzygy = { version = "0.28", optional = true, features = ["mmap"] }
+shakmaty = { version = "0.30", optional = true, default-features = false }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+serde_json = "1"
+
+[[bench]]
+name = "movegen"
+harness = false
+
+

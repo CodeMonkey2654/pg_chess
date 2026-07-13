@@ -1,0 +1,12 @@
+[package]
+name = "gambit-uci"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+gambit-db = { path = "../gambit-db" }
+thiserror = "2"

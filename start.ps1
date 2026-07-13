@@ -110,4 +110,4 @@ Write-Host "Cleaning build artifacts..." -ForegroundColor Cyan
 cargo clean
 
 Write-Host "Running pgrx extension on $PG_VERSION..." -ForegroundColor Cyan
-cargo pgrx run $PG_VERSION
+cargo pgrx run $PG_VERSION -p pg_chess

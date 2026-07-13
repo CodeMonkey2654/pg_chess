@@ -1,35 +1,48 @@
 # Architecture
 
-The extension is split into a small Rust domain model and a PostgreSQL-facing adapter layer.
+The project is a Cargo workspace with a Rust chess engine and adapters for PostgreSQL, Python, and UCI.
 
-## Layers
+## Crates
 
-- The Rust chess model lives in the modules under src. It handles board representation, FEN parsing, move representation, move generation, and simple game state.
-- The PostgreSQL layer is centered in src/api.rs. This file defines the custom SQL types and exposes the public SQL functions.
+- **gambit-db** (`crates/gambit-db/`): board, FEN, move generation, SAN/PGN, Zobrist hashing, game state. Published Rust API.
+- **gambit-ingest** (`crates/gambit-ingest/`): high-throughput PGN bulk loader for the `gambit` PostgreSQL schema.
+- **pg_chess** (`crates/pg_chess/`): pgrx extension exposing `chess_*` SQL types and functions.
+- **gambit-py** (`crates/gambit-py/`): PyO3 bindings for Python.
+- **gambit-uci** (`crates/gambit-uci/`): UCI protocol helpers (external engine integration).
 
-## Module outline
+## Module layout (gambit-db)
 
-- src/types.rs: basic chess primitives such as color, piece kind, and piece.
-- src/board.rs: square indexing and the mailbox board representation.
-- src/fen.rs: position state plus FEN parsing and formatting.
-- src/movement.rs: move representation and UCI parsing.
-- src/movegen.rs: move generation and legality checks.
-- src/game.rs: simple game history and status tracking.
-- src/api.rs: pgrx entry points and SQL-facing wrappers.
+- `square`, `board`, `types` — LERF indexing, mailbox board with embedded occupancy bitboards
+- `fen/` — parse, format, validate, `Position` with cached king squares and Zobrist hash
+- `movement` — `Move`, UCI
+- `movegen/` — pseudo-legal generation, bitboard-accelerated attacks, castling, legality filter, make/unmake
+- `san/`, `pgn/` — contextual notation (mainline + nested RAVs)
+- `game` — `ChessGame` with incremental position and hash history
+- `perft` — recursive legal-move correctness counting
+- `tablebase` (feature `tablebase`) — Syzygy `.rtbw`/`.rtbz` probing via `shakmaty-syzygy`
+
+## Public API
+
+Use `gambit_db::prelude` for the common surface: `Position`, `Move`, `ChessGame`, SAN/PGN helpers.
+
+- `Position::from_fen` always runs semantic validation (`Result`)
+- `legal_moves()` returns `Vec<Move>`
+- Optional `tablebase` feature enables `Tablebase::open` / `probe_wdl` / `probe_dtz`
 
 ## Dependency direction
 
-The domain modules do not depend on pgrx. They are plain Rust logic. The pgrx layer imports those modules and exposes them over SQL.
+```
+gambit-db (engine)
+    ↑
+    ├── pg_chess
+    ├── gambit-ingest
+    ├── gambit-py
+    └── gambit-uci
+```
+
+Adapters depend on `gambit-db`; the engine has no pgrx/pyo3 dependency.
 
 ## Error handling
 
-SQL functions use pgrx error handling. Invalid input or illegal moves raise PostgreSQL errors rather than silently returning a partial result.
-
-## What is stored
-
-Positions, moves, and game history are the main persisted concepts. The board is stored implicitly as part of a position.
-
-## What is derived
-
-Legal moves, checkmate/stalemate checks, and game status are computed from the current position rather than stored as separate state.
-
+- Rust API: `Result` with `FenError`, `MoveError`, `SanError`, `PgnError`, `MoveParseError`
+- SQL boundary: pgrx `error!()` for invalid input

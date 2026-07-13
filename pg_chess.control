@@ -1,6 +1,0 @@
-comment = 'pg_chess:  Created by pgrx'
-default_version = '@CARGO_VERSION@'
-module_pathname = 'pg_chess'
-relocatable = false
-superuser = true
-trusted = false
