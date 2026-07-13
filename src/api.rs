@@ -12,7 +12,7 @@ use crate::types::Color;
 use pgrx::iter::TableIterator;
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType, PostgresEq, PostgresHash, PostgresOrd)]
+#[derive(Debug, Clone, Serialize, Deserialize, PostgresType, PostgresEq, PostgresHash, PostgresOrd)]
 #[inoutfuncs]
 pub struct chess_position(pub Position);
 
@@ -57,6 +57,12 @@ impl PartialEq for chess_position {
 }
 
 impl Eq for chess_position {}
+
+impl PartialOrd for chess_position {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl Ord for chess_position {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -114,7 +120,7 @@ impl InOutFuncs for chess_move {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType, PostgresEq)]
 #[inoutfuncs]
 pub struct chess_game(pub ChessGame);
 
@@ -306,11 +312,6 @@ fn chess_apply_move(position: chess_position, uci: &str) -> chess_position {
         Ok(next) => chess_position(next),
         Err(_) => error!("illegal move '{}' in this position", uci),
     }
-}
-
-#[pg_extern]
-fn chess_position_hash(position: chess_position) -> i64 {
-    position.0.zobrist_hash() as i64
 }
 
 #[pg_extern]
@@ -604,5 +605,108 @@ mod tests {
         .expect("SPI failed")
         .expect("NULL");
         assert_eq!(last_uci, "e7e5");
+    }
+
+    #[pg_test]
+    fn equal_positions_compare_equal() {
+        let eq = Spi::get_one::<bool>(
+            "SELECT chess_from_fen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1') \
+                  = chess_start_position()",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(eq);
+    }
+
+    #[pg_test]
+    fn transposition_compares_equal_ignoring_clocks() {
+        // Same board/side/rights/ep, but different halfmove & fullmove counters.
+        // Chess-equivalence must treat these as EQUAL.
+        let eq = Spi::get_one::<bool>(
+            "SELECT chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 0 1') \
+                  = chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 9 40')",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(eq, "positions differing only in clocks must be equal");
+    }
+
+    #[pg_test]
+    fn different_side_to_move_not_equal() {
+        let eq = Spi::get_one::<bool>(
+            "SELECT chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 0 1') \
+                  = chess_from_fen('4k3/8/8/8/8/8/8/4K3 b - - 0 1')",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(!eq);
+    }
+
+    #[pg_test]
+    fn group_by_buckets_equal_positions() {
+        // Two clock-differing spellings of the same position + one different
+        // position => GROUP BY should yield 2 groups, one of size 2.
+        let max_group = Spi::get_one::<i64>(
+            "WITH v(p) AS (VALUES \
+                (chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 0 1')), \
+                (chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 5 9')), \
+                (chess_from_fen('4k3/8/8/8/8/8/8/5K2 w - - 0 1'))) \
+             SELECT max(c) FROM (SELECT count(*) c FROM v GROUP BY p) g",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(max_group, 2);
+    }
+
+    #[pg_test]
+    fn distinct_dedups_transpositions() {
+        let n = Spi::get_one::<i64>(
+            "WITH v(p) AS (VALUES \
+                (chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 0 1')), \
+                (chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 5 9'))) \
+             SELECT count(DISTINCT p) FROM v",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(n, 1, "clock-only differences must dedup to one");
+    }
+
+    #[pg_test]
+    fn order_by_is_stable_and_total() {
+        // Just assert ORDER BY runs and returns all rows (btree opclass works).
+        let n = Spi::get_one::<i64>(
+            "WITH v(p) AS (VALUES \
+                (chess_start_position()), \
+                (chess_from_fen('4k3/8/8/8/8/8/8/4K3 w - - 0 1'))) \
+             SELECT count(*) FROM (SELECT p FROM v ORDER BY p) o",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(n, 2);
+    }
+
+    #[pg_test]
+    fn games_equal_when_same_moves() {
+        let eq = Spi::get_one::<bool>(
+            "SELECT chess_play(chess_new_game(),'e2e4') \
+                  = chess_play(chess_new_game(),'e2e4')",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(eq);
+    }
+    // Not a #[pg_test] — pure logic check of the eq/hash contract.
+    #[test]
+    fn eq_implies_equal_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        use crate::api::chess_position;
+        use crate::api::Position;
+        let a = chess_position(Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap());
+        let b = chess_position(Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 7 22").unwrap());
+        assert_eq!(a, b); // chess-equivalent
+        let mut ha = DefaultHasher::new(); a.hash(&mut ha);
+        let mut hb = DefaultHasher::new(); b.hash(&mut hb);
+        assert_eq!(ha.finish(), hb.finish(), "equal values must hash equally");
     }
 }
