@@ -1,0 +1,8 @@
+position_rows
+t
+hash_lookup_works
+t
+partition_exists
+t
+opening_stats_populated
+t
