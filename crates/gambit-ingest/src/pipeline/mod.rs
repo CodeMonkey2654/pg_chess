@@ -56,13 +56,19 @@ pub fn parse_file_parallel(
     workers: usize,
     store_pgn: bool,
     fail_fast: bool,
+    profile: &mut Option<crate::profile::IngestProfile>,
 ) -> Result<(Vec<ParsedGame>, IngestStats)> {
+    let split_start = Instant::now();
+    let chunks: Vec<&str> = split_pgn_games(input);
+    if let Some(p) = profile {
+        p.record_count("parse.split_games", split_start.elapsed(), chunks.len() as u64);
+    }
+
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
         .map_err(|e| anyhow::anyhow!("thread pool: {e}"))?;
 
-    let chunks: Vec<&str> = split_pgn_games(input);
     let games_ok = AtomicU64::new(0);
     let games_err = AtomicU64::new(0);
     let positions = AtomicU64::new(0);
@@ -91,6 +97,11 @@ pub fn parse_file_parallel(
             .collect()
     });
 
+    let elapsed = start.elapsed();
+    if let Some(p) = profile {
+        p.record_count("parse.explode_parallel", elapsed, parsed.len() as u64);
+    }
+
     Ok((
         parsed,
         IngestStats {
@@ -98,7 +109,7 @@ pub fn parse_file_parallel(
             games_err: games_err.load(Ordering::Relaxed),
             positions: positions.load(Ordering::Relaxed),
             plies: plies.load(Ordering::Relaxed),
-            elapsed: start.elapsed(),
+            elapsed,
         },
     ))
 }
@@ -122,10 +133,15 @@ pub fn parse_path_parallel(
     workers: usize,
     store_pgn: bool,
     fail_fast: bool,
+    profile: &mut Option<crate::profile::IngestProfile>,
 ) -> Result<(Vec<ParsedGame>, IngestStats)> {
+    let read_start = Instant::now();
     let input = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
-    parse_file_parallel(&input, workers, store_pgn, fail_fast)
+    if let Some(p) = profile {
+        p.record_count("parse.read_file", read_start.elapsed(), input.len() as u64);
+    }
+    parse_file_parallel(&input, workers, store_pgn, fail_fast, profile)
 }
 
 /// Split parsed games into batches of at most `batch_size` games.
@@ -158,7 +174,7 @@ mod tests {
 
     #[test]
     fn parse_file_parallel_two_games() {
-        let (games, stats) = parse_file_parallel(MINI, 2, false, false).expect("parse");
+        let (games, stats) = parse_file_parallel(MINI, 2, false, false, &mut None).expect("parse");
         assert_eq!(games.len(), 2);
         assert_eq!(stats.games_ok, 2);
     }

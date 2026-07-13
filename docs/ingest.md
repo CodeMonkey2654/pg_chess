@@ -43,6 +43,8 @@ cargo run -p gambit-ingest --release -- import `
 | `--batch-games` | 5000 | Games per COPY flush |
 | `--store-pgn` | off | Store full PGN text on each game row |
 | `--fail-fast` | off | Stop on first parse error |
+| `--profile` | off | Print per-step timing breakdown |
+| `--eager-types` | off | Cast to `chess_position`/`chess_move` during INSERT (slower) |
 
 By default, `pgn_text` is **not** stored (best for large Lichess dumps). Metadata, plies, and positions remain fully queryable. Use `--store-pgn` for small collections or debugging.
 
@@ -101,8 +103,10 @@ LIMIT 20;
 - **`--workers`**: Set to physical CPU cores for parse-bound workloads.
 - **`--batch-games`**: Larger batches reduce transaction overhead; 2000–10000 is typical.
 - **Omit `--store-pgn`** at scale — saves significant disk and COPY time.
-- **Partition per source**: Each `--source` gets dedicated `positions_*` / `plies_*` partitions with hash indexes.
+- **Deferred types (default)**: Bulk load stores FEN/UCI text only; `chess_position` / `chess_move` columns are backfilled after all batches, skipping expensive casts during INSERT. Use `--eager-types` for the old behavior.
+- **Partition per source**: Each `--source` gets dedicated `positions_*` / `plies_*` partitions with hash indexes. The `position` btree index is created after backfill.
 - **UNLOGGED staging**: COPY pipeline uses unlogged staging tables for minimal WAL during bulk load.
+- **`--profile`**: Per-step timing breakdown (parse, COPY, INSERT, backfill).
 
 ## Scale notes
 

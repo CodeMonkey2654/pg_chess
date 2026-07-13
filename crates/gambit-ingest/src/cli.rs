@@ -42,6 +42,12 @@ pub enum Command {
         /// Stop on first parse error.
         #[arg(long)]
         fail_fast: bool,
+        /// Print per-step timing breakdown.
+        #[arg(long)]
+        profile: bool,
+        /// Cast FEN/UCI to chess types during INSERT (slower; default defers to post-import backfill).
+        #[arg(long)]
+        eager_types: bool,
     },
     /// Refresh opening move statistics materialized view.
     RefreshStats {

@@ -7,5 +7,11 @@ if [[ -z "${PGURI:-}" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-psql "$PGURI" -v ON_ERROR_STOP=1 -f "$ROOT/schema/migrations/001_core.sql"
-echo "Schema migration complete."
+MIGRATIONS="$ROOT/schema/migrations"
+
+echo "Applying gambit schema migrations..."
+for file in "$MIGRATIONS"/*.sql; do
+  echo "  -> $(basename "$file")"
+  psql "$PGURI" -v ON_ERROR_STOP=1 -f "$file"
+done
+echo "Schema migrations complete."

@@ -1,7 +1,8 @@
 param(
     [int]$GameCount = 50000,
     [int]$Workers = 0,
-    [int]$BatchGames = 5000
+    [int]$BatchGames = 5000,
+    [switch]$Profile
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,7 @@ Write-Host ""
 Write-Metric "Target games" $GameCount
 Write-Metric "Workers" $Workers
 Write-Metric "Batch size" $BatchGames
+Write-Metric "Profile" $Profile.IsPresent
 Write-Metric "DATABASE_URL" $env:DATABASE_URL
 Write-Host ""
 
@@ -78,12 +80,16 @@ cargo run -p gambit-ingest --release -- migrate --pg-uri $env:DATABASE_URL 2>&1 
 
 $Source = "loadtest_" + (Get-Date -Format "yyyyMMdd_HHmmss")
 $ingestStart = Get-Date
-cargo run -p gambit-ingest --release -- import `
-    --pg-uri $env:DATABASE_URL `
-    --source $Source `
-    --workers $Workers `
-    --batch-games $BatchGames `
-    $BenchFixture
+$importArgs = @(
+    "run", "-p", "gambit-ingest", "--release", "--", "import",
+    "--pg-uri", $env:DATABASE_URL,
+    "--source", $Source,
+    "--workers", $Workers,
+    "--batch-games", $BatchGames
+)
+if ($Profile) { $importArgs += "--profile" }
+$importArgs += $BenchFixture
+cargo @importArgs
 if ($LASTEXITCODE -ne 0) { throw "Ingest failed with exit code $LASTEXITCODE" }
 $ErrorActionPreference = $prevEap
 $ingestElapsed = (Get-Date) - $ingestStart
