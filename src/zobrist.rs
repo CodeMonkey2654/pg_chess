@@ -31,7 +31,7 @@ fn keys() -> &'static ZobristKeys {
     static KEYS: OnceLock<ZobristKeys> = OnceLock::new();
     KEYS.get_or_init(|| {
         // Fix seed, NEVER CHANGE THIS
-        let mut rng = SplitMix64::new(0xCOFFEE_123_5678);
+        let mut rng = SplitMix64::new(0xC0FFEE_1234_5678);
         let mut pieces = [[[0u64; 64]; 6]; 2];
         
         for c in 0..2 {

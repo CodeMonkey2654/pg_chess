@@ -21,6 +21,21 @@ const ROOK_DIRECTIONS: [(i8, i8); 4] = [
     (0, 1), (1, 0), (-1, 0), (0, -1)
 ];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveError {
+    Illegal,
+}
+
+impl std::fmt::Display for MoveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MoveError::Illegal => write!(f, "move is not legal in this position"),
+        }
+    }
+}
+
+impl std::error::Error for MoveError {}
+
 #[inline]
 fn offset(sq: Square, file_offset: i8, rank_offset: i8) -> Option<Square> {
     let file = sq.file() as i8 + file_offset;
@@ -347,12 +362,108 @@ impl Position {
             .collect()
     }
 
+    pub fn apply_move(&self, m: Move) -> Result<Position, MoveError> {
+        let legal = self.legal_moves().into_iter().find(|lm| lm.from == m.from && lm.to == m.to && lm.promotion == m.promotion).ok_or(MoveError::Illegal)?;
+
+        let new_board = self.board_after(legal);
+        let mover = self.board.get(legal.from).expect("legal move has a mover");
+        let is_pawn = mover.kind == PieceKind::Pawn;
+        let is_capture = legal.flags.contains(MoveFlags::CAPTURE);
+
+        let halfmove_clock = if is_pawn || is_capture {
+            0
+        } else {
+            self.halfmove_clock + 1
+        };
+
+        let fullmove_number = match self.side_to_move {
+            Color::White => self.fullmove_number,
+            Color::Black => self.fullmove_number + 1,
+        };
+
+        let en_passant = if legal.flags.contains(MoveFlags::DOUBLE_PAWN_PUSH) {
+            let mid_rank = (legal.from.rank() + legal.to.rank()) / 2;
+            Square::from_file_rank(legal.from.file(), mid_rank)
+        } else {
+            None
+        };
+
+        let mut castling = self.castling;
+        if mover.kind == PieceKind::King {
+            match mover.color {
+                Color::White => { castling.white_kingside = false; castling.white_queenside = false; }
+                Color::Black => { castling.black_kingside = false; castling.black_queenside = false; }
+            }
+        }
+
+        let corner_still_has_rook = |sq_file: u8, sq_rank: u8, color: Color| -> bool {
+            match Square::from_file_rank(sq_file, sq_rank) {
+                Some(sq) => matches!(new_board.get(sq),
+                        Some(p) if p.color == color && p.kind == PieceKind::Rook
+                    ),
+                None => false,
+            }
+        };
+        if !corner_still_has_rook(7, 0, Color::White) {
+            castling.white_kingside = false;
+        }
+        if !corner_still_has_rook(0, 0, Color::White) {
+            castling.white_queenside = false; 
+        }
+        if !corner_still_has_rook(7, 7, Color::Black) {
+            castling.black_kingside = false;
+        }
+        if !corner_still_has_rook(0, 7, Color::Black) {
+            castling.black_queenside = false;
+        }
+
+        Ok(Position {
+            board: new_board,
+            side_to_move: self.side_to_move.flip(),
+            castling,
+            en_passant,
+            halfmove_clock,
+            fullmove_number
+        })
+    }
+
     pub fn is_checkmate(&self) -> bool {
         self.is_in_check(self.side_to_move) && self.legal_moves().is_empty()
     }
 
     pub fn is_stalemate(&self) -> bool {
         !self.is_in_check(self.side_to_move) && self.legal_moves().is_empty()
+    }
+
+    pub fn is_fifty_move_draw(&self) -> bool {
+        self.halfmove_clock >= 100
+    }
+
+    pub fn is_insufficient_material(&self) -> bool {
+        let mut minors = 0u32;
+        let mut bishops_light = 0u32;
+        let mut bishops_dark = 0u32;
+        for i in 0..64u8 {
+            let sq = Square(i);
+            if let Some(p) = self.board.get(sq) {
+                match p.kind {
+                    PieceKind::King => {}
+                    PieceKind::Knight => minors += 1,
+                    PieceKind::Bishop => {
+                        minors += 1;
+                        if (sq.file() + sq.rank()) % 2 == 0 { bishops_dark += 1; }
+                        else { bishops_light += 1; }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        match minors {
+            0 => true,
+            1 => true,
+            2 => bishops_light == 0 || bishops_dark == 0, //if both bishops are same color
+            _ => false,
+        }
     }
 }
 
@@ -557,5 +668,118 @@ mod tests {
         assert!(!pos.is_in_check(Color::Black));
         assert!(pos.is_stalemate());
         assert!(!pos.is_checkmate());
+    }
+
+  #[test]
+    fn apply_rejects_illegal_move() {
+        let pos = Position::starting_position();
+        // e2 to e5 is not a legal pawn move.
+        let bad = Move::new(
+            Square::from_algebraic("e2").unwrap(),
+            Square::from_algebraic("e5").unwrap(),
+            None,
+        ).unwrap();
+        assert_eq!(pos.apply_move(bad), Err(MoveError::Illegal));
+    }
+
+    #[test]
+    fn double_push_sets_en_passant_target() {
+        let pos = Position::starting_position();
+        let e2e4 = Move::new(
+            Square::from_algebraic("e2").unwrap(),
+            Square::from_algebraic("e4").unwrap(),
+            None,
+        ).unwrap();
+        let after = pos.apply_move(e2e4).unwrap();
+        assert_eq!(after.en_passant, Some(Square::from_algebraic("e3").unwrap()));
+        assert_eq!(after.side_to_move, Color::Black);
+    }
+
+    #[test]
+    fn en_passant_target_clears_next_move() {
+        let pos = Position::starting_position();
+        let e2e4 = Move::new(Square::from_algebraic("e2").unwrap(),
+                             Square::from_algebraic("e4").unwrap(), None).unwrap();
+        let after1 = pos.apply_move(e2e4).unwrap();
+        // Black replies a7a6 (not a double push) -> EP target must clear.
+        let a7a6 = Move::new(Square::from_algebraic("a7").unwrap(),
+                             Square::from_algebraic("a6").unwrap(), None).unwrap();
+        let after2 = after1.apply_move(a7a6).unwrap();
+        assert_eq!(after2.en_passant, None);
+    }
+
+    #[test]
+    fn king_move_loses_castling_rights() {
+        // White king e1 can step to e2; both white rights vanish.
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1").unwrap();
+        let ke1e2 = Move::new(Square::from_algebraic("e1").unwrap(),
+                              Square::from_algebraic("e2").unwrap(), None).unwrap();
+        let after = pos.apply_move(ke1e2).unwrap();
+        assert!(!after.castling.white_kingside);
+        assert!(!after.castling.white_queenside);
+    }
+
+    #[test]
+    fn capturing_rook_removes_opponent_right() {
+        // White rook a1 captures black rook a8; black loses queenside right.
+        let pos = Position::from_fen("r3k3/8/8/8/8/8/8/R3K3 w Qq - 0 1").unwrap();
+        let rxa8 = Move::new(Square::from_algebraic("a1").unwrap(),
+                             Square::from_algebraic("a8").unwrap(), None).unwrap();
+        let after = pos.apply_move(rxa8).unwrap();
+        assert!(!after.castling.black_queenside); // the missed-case check
+    }
+
+    #[test]
+    fn halfmove_clock_resets_on_capture_and_pawn() {
+        // Knight shuffle increments; then a pawn move resets to 0.
+        let pos = Position::from_fen("4k3/8/8/8/8/5N2/4P3/4K3 w - - 5 10").unwrap();
+        let nf3g5 = Move::new(Square::from_algebraic("f3").unwrap(),
+                              Square::from_algebraic("g5").unwrap(), None).unwrap();
+        let after_knight = pos.apply_move(nf3g5).unwrap();
+        assert_eq!(after_knight.halfmove_clock, 6); // incremented
+
+        let e2e4 = Move::new(Square::from_algebraic("e2").unwrap(),
+                             Square::from_algebraic("e4").unwrap(), None).unwrap();
+        let after_pawn = pos.apply_move(e2e4).unwrap();
+        assert_eq!(after_pawn.halfmove_clock, 0); // reset
+    }
+
+    #[test]
+    fn scholars_mate_is_checkmate() {
+        // 1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6?? 4. Qxf7#
+        let moves = ["e2e4","e7e5","f1c4","b8c6","d1h5","g8f6","h5f7"];
+        let mut pos = Position::starting_position();
+        for uci in moves {
+            let m = Move::from_uci(uci).unwrap();
+            pos = pos.apply_move(m).unwrap();
+        }
+        assert!(pos.is_checkmate());
+    }
+
+    #[test]
+    fn zobrist_is_deterministic_and_distinguishing() {
+        let start = Position::starting_position();
+        // Same position hashes identically.
+        assert_eq!(start.zobrist_hash(), Position::starting_position().zobrist_hash());
+        // A different position hashes differently (overwhelmingly likely).
+        let after = start.apply_move(Move::from_uci("e2e4").unwrap()).unwrap();
+        assert_ne!(start.zobrist_hash(), after.zobrist_hash());
+    }
+
+    #[test]
+    fn zobrist_side_to_move_matters() {
+        // Identical board layout but different side-to-move must differ.
+        let w = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        let b = Position::from_fen("4k3/8/8/8/8/8/8/4K3 b - - 0 1").unwrap();
+        assert_ne!(w.zobrist_hash(), b.zobrist_hash());
+    }
+
+    #[test]
+    fn insufficient_material_detects_bare_kings() {
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_insufficient_material());
+        // King + rook is sufficient.
+        let rook = Position::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1").unwrap();
+        assert!(!rook.is_insufficient_material());
     }
 }
