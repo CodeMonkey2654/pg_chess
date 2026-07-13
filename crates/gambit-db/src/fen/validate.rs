@@ -149,21 +149,18 @@ fn validate_en_passant(pos: &Position) -> Result<(), FenError> {
 
     let ep_rank = ep.rank();
     let ep_file = ep.file();
-    let expected_pawn_rank = match pos.side_to_move {
-        Color::White => 4,
-        Color::Black => 3,
+
+    // Rank of the opponent pawn that just double-pushed (0-indexed).
+    let (expected_ep_rank, opponent_pawn_rank) = match pos.side_to_move {
+        Color::White => (5, 4),
+        Color::Black => (2, 3),
     };
 
-    if ep_rank != expected_pawn_rank {
+    if ep_rank != expected_ep_rank {
         return Err(FenError::InvalidEnPassant);
     }
 
-    let behind_rank = match pos.side_to_move {
-        Color::White => 5,
-        Color::Black => 2,
-    };
-
-    let has_opponent_pawn = Square::from_file_rank(ep_file, behind_rank)
+    let has_opponent_pawn = Square::from_file_rank(ep_file, opponent_pawn_rank)
         .and_then(|sq| pos.board.get(sq))
         .is_some_and(|p| p.color == pos.side_to_move.flip() && p.kind == PieceKind::Pawn);
 
@@ -209,6 +206,13 @@ mod tests {
     #[test]
     fn accepts_starting_position() {
         let pos = parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+            .expect("syntax ok");
+        assert!(validate_position(&pos).is_ok());
+    }
+
+    #[test]
+    fn accepts_en_passant_after_e4() {
+        let pos = parse_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
             .expect("syntax ok");
         assert!(validate_position(&pos).is_ok());
     }

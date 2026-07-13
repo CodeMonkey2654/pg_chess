@@ -55,18 +55,22 @@ pub async fn truncate_staging(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Insert games from staging and return batch_seq → game_id mapping.
-pub async fn insert_games_from_staging(client: &Client, source_id: i32) -> Result<Vec<(i32, i64)>> {
-    client
-        .batch_execute(
-            "CREATE TEMP TABLE IF NOT EXISTS _batch_id_map (
-                batch_seq int PRIMARY KEY,
-                game_id bigint NOT NULL
-            ) ON COMMIT DROP",
-        )
-        .await?;
+/// Flush a staging batch: INSERT games/positions/plies → truncate staging.
+pub async fn flush_staging_batch(client: &mut Client, source_id: i32) -> Result<(usize, u64, u64)> {
+    let tx = client.transaction().await.context("begin batch tx")?;
 
-    let rows = client
+    tx.batch_execute(
+        "CREATE TEMP TABLE IF NOT EXISTS _batch_id_map (
+            batch_seq int PRIMARY KEY,
+            game_id bigint NOT NULL
+        )",
+    )
+    .await?;
+    tx.batch_execute("TRUNCATE _batch_id_map")
+        .await
+        .context("truncate batch id map")?;
+
+    let rows = tx
         .query(
             "WITH inserted AS (
                 INSERT INTO gambit.games (
@@ -99,15 +103,9 @@ pub async fn insert_games_from_staging(client: &Client, source_id: i32) -> Resul
         .await
         .context("insert games from staging")?;
 
-    Ok(rows
-        .iter()
-        .map(|r| (r.get::<_, i32>(0), r.get::<_, i64>(1)))
-        .collect())
-}
+    let game_count = rows.len();
 
-/// Insert positions from staging using batch id map.
-pub async fn insert_positions_from_staging(client: &Client, source_id: i32) -> Result<u64> {
-    let n = client
+    let pos = tx
         .execute(
             "INSERT INTO gambit.positions (game_id, source_id, ply, position, hash, fen)
             SELECT m.game_id, $1, sp.ply, sp.fen::chess_position, sp.hash, sp.fen
@@ -117,12 +115,8 @@ pub async fn insert_positions_from_staging(client: &Client, source_id: i32) -> R
         )
         .await
         .context("insert positions from staging")?;
-    Ok(n)
-}
 
-/// Insert plies from staging using batch id map.
-pub async fn insert_plies_from_staging(client: &Client, source_id: i32) -> Result<u64> {
-    let n = client
+    let pl = tx
         .execute(
             "INSERT INTO gambit.plies (game_id, source_id, ply, move, san, uci)
             SELECT m.game_id, $1, sp.ply, sp.uci::chess_move, sp.san, sp.uci
@@ -132,14 +126,13 @@ pub async fn insert_plies_from_staging(client: &Client, source_id: i32) -> Resul
         )
         .await
         .context("insert plies from staging")?;
-    Ok(n)
-}
 
-/// Flush a staging batch: COPY → INSERT games/positions/plies → truncate staging.
-pub async fn flush_staging_batch(client: &Client, source_id: i32) -> Result<(usize, u64, u64)> {
-    let map = insert_games_from_staging(client, source_id).await?;
-    let pos = insert_positions_from_staging(client, source_id).await?;
-    let pl = insert_plies_from_staging(client, source_id).await?;
-    truncate_staging(client).await?;
-    Ok((map.len(), pos, pl))
+    tx.batch_execute(
+        "TRUNCATE gambit.staging_games, gambit.staging_positions, gambit.staging_plies",
+    )
+    .await
+    .context("truncate staging")?;
+
+    tx.commit().await.context("commit batch tx")?;
+    Ok((game_count, pos, pl))
 }

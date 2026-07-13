@@ -89,7 +89,7 @@ async fn cmd_import(
     store_pgn: bool,
     fail_fast: bool,
 ) -> Result<()> {
-    let client = connect(pg_uri).await?;
+    let mut client = connect(pg_uri).await?;
     let source_id = ensure_source(&client, source).await?;
     info!(source, source_id, "source ready");
 
@@ -108,7 +108,7 @@ async fn cmd_import(
 
     for batch in batch_games(games, batch_size) {
         let (game_count, pos_count, ply_count) =
-            ingest_batch(&client, source_id, &batch, store_pgn).await?;
+            ingest_batch(&mut client, source_id, &batch, store_pgn).await?;
         total_games += game_count;
         total_positions += pos_count;
         total_plies += ply_count;
@@ -124,12 +124,18 @@ async fn cmd_import(
         "ingest complete"
     );
 
-    print_summary(&parse_stats, total_games, total_positions, ingest_elapsed);
+    print_summary(
+        &parse_stats,
+        total_games,
+        total_positions,
+        total_plies,
+        ingest_elapsed,
+    );
     Ok(())
 }
 
 async fn ingest_batch(
-    client: &tokio_postgres::Client,
+    client: &mut tokio_postgres::Client,
     source_id: i32,
     batch: &[ParsedGame],
     store_pgn: bool,
@@ -186,19 +192,34 @@ fn print_summary(
     parse_stats: &IngestStats,
     games: usize,
     positions: u64,
+    plies: u64,
     ingest_elapsed: std::time::Duration,
 ) {
+    let ingest_secs = ingest_elapsed.as_secs_f64().max(f64::EPSILON);
+    let total_secs = (parse_stats.elapsed + ingest_elapsed).as_secs_f64();
+
     println!();
     println!("=== Ingest Summary ===");
-    println!("  Games loaded:    {games}");
-    println!("  Parse errors:    {}", parse_stats.games_err);
-    println!("  Positions:       {positions}");
+    println!("  Games loaded:      {games}");
+    println!("  Parse errors:      {}", parse_stats.games_err);
+    println!("  Positions loaded:  {positions}");
+    println!("  Plies loaded:      {plies}");
+    println!();
+    println!("  Parse phase:");
+    println!("    elapsed:         {:.2}s", parse_stats.elapsed.as_secs_f64());
+    println!("    games/sec:       {:.0}", parse_stats.games_per_sec());
+    println!("    positions/sec:   {:.0}", parse_stats.positions_per_sec());
+    println!();
+    println!("  Ingest phase (DB COPY + INSERT):");
+    println!("    elapsed:         {:.2}s", ingest_secs);
+    println!("    games/sec:       {:.0}", games as f64 / ingest_secs);
+    println!("    games/min:       {:.0}", games as f64 / ingest_secs * 60.0);
+    println!("    positions/sec:   {:.0}", positions as f64 / ingest_secs);
+    println!("    plies/sec:       {:.0}", plies as f64 / ingest_secs);
+    println!();
+    println!("  End-to-end:        {:.2}s", total_secs);
     println!(
-        "  Parse rate:      {:.0} games/sec",
-        parse_stats.games_per_sec()
-    );
-    println!(
-        "  Ingest rate:     {:.0} games/sec",
-        games as f64 / ingest_elapsed.as_secs_f64().max(f64::EPSILON)
+        "    positions/sec:   {:.0}",
+        positions as f64 / total_secs.max(f64::EPSILON)
     );
 }
