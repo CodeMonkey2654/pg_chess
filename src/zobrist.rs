@@ -1,5 +1,5 @@
 use crate::board::Square;
-use crate::fen::Position;
+use crate::fen::{CastlingRights, Position};
 use crate::types::Color;
 use std::sync::OnceLock;
 
@@ -55,6 +55,32 @@ fn keys() -> &'static ZobristKeys {
     })
 }
 
+
+pub fn piece_key(piece: Piece, sq: Square) -> u64 {
+    keys().pieces[piece.color.index()][piece.kind.index()[sq.index() as usize]]
+}
+
+pub fn black_to_move_key() -> u64 {
+    keys().black_to_move
+}
+
+pub fn castling_key(mask: usize) -> u64 {
+    keys().castling[mask]
+}
+
+pub fn en_passant_file_key(file: u8) -> u64 {
+    keys().en_passant_file[file as usize]
+}
+
+pub fn castling_mask(c: &CastlingRights) -> usize {
+    let mut mask = 0usize;
+    if c.white_kingside { mask |= 1; }
+    if c.white_queenside { mask |= 2; }
+    if c.black_kingside { mask |= 4; }
+    if c.black_queenside { mask |= 8; }
+    mask
+}
+
 impl Position {
     pub fn zobrist_hash(&self) -> u64 {
         let k = keys();
@@ -71,12 +97,7 @@ impl Position {
             h ^= k.black_to_move;
         }
 
-        let mut mask = 0usize;
-        if self.castling.white_kingside { mask |= 1; }
-        if self.castling.white_queenside { mask |= 2; }
-        if self.castling.black_kingside { mask |= 4; }
-        if self.castling.black_queenside { mask |= 8; }
-        h ^= k.castling[mask];
+        h ^= keys().castling[castling_mask(&self.castling)];
 
         // En-passant: only file matters for repetition
         if let Some(ep) = self.en_passant {

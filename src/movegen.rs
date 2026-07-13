@@ -417,14 +417,18 @@ impl Position {
             castling.black_queenside = false;
         }
 
-        Ok(Position {
+        let mut pos = Position {
             board: new_board,
             side_to_move: self.side_to_move.flip(),
             castling,
             en_passant,
             halfmove_clock,
-            fullmove_number
-        })
+            fullmove_number,
+            hash: 0
+        };
+        pos.hash = pos.zobrist_hash();
+        Ok(pos)
+
     }
 
     pub fn is_checkmate(&self) -> bool {

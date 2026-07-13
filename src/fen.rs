@@ -91,18 +91,22 @@ pub struct Position {
     pub en_passant: Option<Square>, // The square a capturing pawn moves TO....
     pub halfmove_clock: u32,
     pub fullmove_number: u32,
+    pub hash: u64,
 }
 
 impl Position {
     pub fn starting_position() -> Position {
-        Position {
+        let mut pos = Position {
             board: Board::starting_position(),
             side_to_move: Color::White,
             castling: CastlingRights::all(),
             en_passant: None,
             halfmove_clock: 0,
             fullmove_number: 1,
-        }
+            hash: 0,
+        };
+        pos.hash = zobrist_hash();
+        pos
     }
 
     pub fn to_fen(&self) -> String{
@@ -219,15 +223,17 @@ impl Position {
         // numbers
         let halfmove_clock: u32 = fields[4].parse().ok()?;
         let fullmove_number: u32 = fields[5].parse().ok()?;
-
-        Some(Position {
+        let mut pos = Position {
             board,
             side_to_move,
             castling,
             en_passant,
             halfmove_clock,
             fullmove_number,
-        })
+            hash: 0,
+        };
+        pos.hash = pos.zobrist_hash();
+        Some(pos)
     }
 }
 
