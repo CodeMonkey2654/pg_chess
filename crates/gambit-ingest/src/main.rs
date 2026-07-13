@@ -89,7 +89,7 @@ async fn cmd_import(
     store_pgn: bool,
     fail_fast: bool,
 ) -> Result<()> {
-    let client = connect(pg_uri).await?;
+    let mut client = connect(pg_uri).await?;
     let source_id = ensure_source(&client, source).await?;
     info!(source, source_id, "source ready");
 
@@ -108,7 +108,7 @@ async fn cmd_import(
 
     for batch in batch_games(games, batch_size) {
         let (game_count, pos_count, ply_count) =
-            ingest_batch(&client, source_id, &batch, store_pgn).await?;
+            ingest_batch(&mut client, source_id, &batch, store_pgn).await?;
         total_games += game_count;
         total_positions += pos_count;
         total_plies += ply_count;
@@ -129,7 +129,7 @@ async fn cmd_import(
 }
 
 async fn ingest_batch(
-    client: &tokio_postgres::Client,
+    client: &mut tokio_postgres::Client,
     source_id: i32,
     batch: &[ParsedGame],
     store_pgn: bool,

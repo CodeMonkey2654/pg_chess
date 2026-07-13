@@ -29,6 +29,9 @@ SELECT count(*) FROM chess_legal_moves(chess_start_position());
 ## Development
 
 ```powershell
+# Start PostgreSQL + schema (sets $env:DATABASE_URL)
+.\scripts\start_pg.ps1
+
 # Full quality gates (fmt, clippy, tests, perft)
 .\scripts\check.ps1
 
@@ -36,6 +39,7 @@ SELECT count(*) FROM chess_legal_moves(chess_start_position());
 .\scripts\perft.ps1
 .\scripts\bench.ps1
 .\scripts\pgrx_test.ps1
+.\scripts\ingest_bench.ps1
 ```
 
 ```bash

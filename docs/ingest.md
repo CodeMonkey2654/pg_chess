@@ -13,7 +13,7 @@ CREATE EXTENSION pg_chess;
 2. Apply the gambit schema:
 
 ```powershell
-$env:DATABASE_URL = "postgres://postgres:postgres@localhost:28818/postgres"
+$env:DATABASE_URL = "postgres://$env:USERNAME@127.0.0.1:28818/postgres"
 cargo run -p gambit-ingest -- migrate --pg-uri $env:DATABASE_URL
 ```
 
