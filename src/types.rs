@@ -78,6 +78,11 @@ impl PieceKind {
             PieceKind::King => 0,
         }
     }
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
 }
 
 /// A concrete pice is a color + kind. 

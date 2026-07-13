@@ -1,21 +1,54 @@
 # pg_chess
 
-A PosgreSQL extension that contains chess analysis written in rust so I can learn how PG extensions work under the hood. 
+pg_chess is a small PostgreSQL extension for working with chess positions, moves, and simple games directly in SQL. It is implemented in Rust with pgrx and exposes custom PostgreSQL types plus helper functions.
 
-## Phases
-1. Base Chunks - Color, PieceKind, Piece, value and char conversions
-2. Board - Square index representation of the board using little endian rank file
-    a. Square
-    b. Board
-3. Fen Position class 
+## What it currently supports
 
+- FEN parsing and formatting for chess positions
+- UCI parsing and formatting for moves
+- Custom SQL types: `chess_position`, `chess_move`, and `chess_game`
+- Legal move generation from a position
+- Move application and simple game tracking
 
-## Next steps
-1. Move Type + UCI/SAN -The chess_move type. Move struct (from-square, to-square, promotion, flags), parse/emit UCI (e2e4, e7e8q), and the storable SQL type. Foundation for everything move-related.
-2. Pseudo-legal move generation - Per-piece move generation (pawn pushes/captures, knight, bishop, rook, queen, king) without check filtering yet. This is where the mailbox board earns its keep — you'll see the chess logic clearly.
-3. Apply move and game state machine - The chess_game type holding a position plus full move history. apply_move (reject illegal moves), update clocks/castling/en-passant, detect draws (50-move, threefold repetition).
-4. The full set of #[pg_extern] functions Postgres calls: chess_legal_moves, chess_apply_move, chess_in_check, chess_is_checkmate, chess_game_from_pgn, etc. Set-returning functions for legal moves.
-5. Chunk 11 — Operators + operator classes
-Custom SQL operators (=, @> "position contains"), plus btree/hash operator classes so the types can be compared, sorted, and used as index keys. This is the PostgresEq/PostgresOrd/PostgresHash work.
-6. Chunk 12 — Indexes + optimization
-The payoff for a database-native engine: Zobrist hashing for fast position identity, expression indexes, a GIN index for "positions containing piece X on square Y" queries, and the optional bitboard layer for move-gen speed. Where the mailbox-vs-bitboard door I left open gets used.
+## Status
+
+This project is still pre-alpha. The core model is working, but features such as SAN/PGN support, richer game analysis, and broader polish are still pending.
+
+## Quick start
+
+### Prerequisites
+
+- Rust and Cargo
+- A supported PostgreSQL installation
+- `cargo-pgrx`
+- The PostgreSQL development files required by pgrx
+
+### Install and run
+
+```bash
+cargo install --locked cargo-pgrx
+cargo pgrx init
+cargo pgrx run
+```
+
+### Try it in SQL
+
+```sql
+SELECT chess_to_fen(chess_start_position());
+SELECT chess_to_fen(chess_apply_move(chess_start_position(), 'e2e4'));
+SELECT count(*) FROM chess_legal_moves(chess_start_position());
+```
+
+## Notes
+
+- `chess_is_valid_fen` and `chess_is_valid_uci` check formatting and parsing, not full chess legality.
+- Applying an illegal move through SQL helpers raises an error.
+- See the docs in the docs directory for a compact overview of the data model and SQL API.
+
+## Development
+
+```bash
+cargo test
+cargo pgrx test
+cargo fmt --check
+```

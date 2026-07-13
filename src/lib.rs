@@ -5,7 +5,9 @@ use pgrx::prelude::*;
 mod types;
 mod board;
 mod fen;
+mod zobrist;
 mod movement;
+mod movegen;
 mod game;
 mod api;
 
