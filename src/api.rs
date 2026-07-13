@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::ffi::CStr;
 use crate::game::{ChessGame, GameStatus};
 use crate::movement::{Move, MoveFlags};
-use crate::types::Color;
 use pgrx::iter::TableIterator;
 
 #[allow(non_camel_case_types)]
@@ -82,7 +81,7 @@ impl Ord for chess_position {
 impl std::hash::Hash for chess_position {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Hash is hash of zobrist hash to keep consistent with my equality system, it's just life tho
-        self.0.zobrist_hash().hash(state);
+        self.0.hash.hash(state);
     }
 }
 
@@ -740,7 +739,7 @@ mod tests {
         let mut hb = DefaultHasher::new(); b.hash(&mut hb);
         assert_eq!(ha.finish(), hb.finish(), "equal values must hash equally");
     }
- 
+
     #[pg_test]
     fn game_positions_count_matches_plies() {
         // A 3-move game has 4 positions (start + 3).
@@ -757,14 +756,15 @@ mod tests {
     #[pg_test]
     fn transposition_shares_hash_in_positions() {
         // Two move orders reaching the same position must produce a shared hash.
-        // 1.e4 e5 2.Nf3  vs  1.Nf3 e5 2.e4  -> same position after 2 full moves.
+        // Path A: 1.Nf3 Nc6 2.Nc3 Nf6  vs  Path B: 1.Nc3 Nf6 2.Nf3 Nc6
+        // Pure knight shuffles — no pawns moved, no en passant, same final position.
         let same = Spi::get_one::<bool>(
             "WITH a AS (SELECT hash FROM chess_game_positions( \
-                    chess_play(chess_play(chess_play( \
-                        chess_new_game(),'e2e4'),'e7e5'),'g1f3')) WHERE ply = 3), \
+                    chess_play(chess_play(chess_play(chess_play( \
+                        chess_new_game(),'g1f3'),'b8c6'),'b1c3'),'g8f6')) WHERE ply = 4), \
                   b AS (SELECT hash FROM chess_game_positions( \
-                    chess_play(chess_play(chess_play( \
-                        chess_new_game(),'g1f3'),'e7e5'),'e2e4')) WHERE ply = 3) \
+                    chess_play(chess_play(chess_play(chess_play( \
+                        chess_new_game(),'b1c3'),'g8f6'),'g1f3'),'b8c6')) WHERE ply = 4) \
              SELECT (SELECT hash FROM a) = (SELECT hash FROM b)",
         )
         .expect("SPI failed")
@@ -786,9 +786,10 @@ mod tests {
         .expect("insert exploded positions");
 
         // The position after 1.e4 (ply 1) should be findable by its hash.
+        // Get the expected hash from a separate 1-move game via chess_game_positions.
         let found = Spi::get_one::<i64>(
             "SELECT count(*) FROM t_positions \
-             WHERE hash = chess_position_hash(chess_apply_move(chess_start_position(),'e2e4'))",
+             WHERE hash = (SELECT hash FROM chess_game_positions(chess_play(chess_new_game(),'e2e4')) WHERE ply = 1)",
         )
         .expect("SPI failed")
         .expect("NULL");

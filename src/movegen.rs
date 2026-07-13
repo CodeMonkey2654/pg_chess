@@ -413,7 +413,7 @@ impl Position {
             castling.white_kingside = false;
         }
         if !corner_still_has_rook(0, 0, Color::White) {
-            castling.white_queenside = false; 
+            castling.white_queenside = false;
         }
         if !corner_still_has_rook(7, 7, Color::Black) {
             castling.black_kingside = false;
@@ -433,13 +433,13 @@ impl Position {
         if let Some(new_ep) = en_passant {
             new_hash ^= en_passant_file_key(new_ep.file());
         }
-        
+
         new_hash ^= piece_key(mover, legal.from);
 
         if legal.flags.contains(MoveFlags::EN_PASSANT) {
             if let Some(cap_sq) = Square::from_file_rank(legal.to.file(), legal.from.rank()) {
-                if let Some(captured) = self.board.get(legal.to) {
-                    new_hash ^= piece_key(captured, legal.to);
+                if let Some(captured) = self.board.get(cap_sq) {
+                    new_hash ^= piece_key(captured, cap_sq);
                 }
             }
         } else if is_capture {
