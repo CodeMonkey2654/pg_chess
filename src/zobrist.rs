@@ -1,6 +1,6 @@
 use crate::board::Square;
 use crate::fen::{CastlingRights, Position};
-use crate::types::Color;
+use crate::types::{Piece, Color};
 use std::sync::OnceLock;
 
 struct ZobristKeys {
@@ -57,7 +57,7 @@ fn keys() -> &'static ZobristKeys {
 
 
 pub fn piece_key(piece: Piece, sq: Square) -> u64 {
-    keys().pieces[piece.color.index()][piece.kind.index()[sq.index() as usize]]
+    keys().pieces[piece.color.index()][piece.kind.index()][sq.index() as usize]
 }
 
 pub fn black_to_move_key() -> u64 {

@@ -2,6 +2,7 @@ use crate::board::{Board, Square};
 use crate::fen::Position;
 use crate::types::{Color, PieceKind, Piece};
 use crate::movement::{Move, MoveFlags};
+use crate::zobrist::{ piece_key, black_to_move_key, castling_key, en_passant_file_key, castling_mask};
 
 /// Move offsets using signed deltas and bounds-checked Square. Prevents wrap from a-h file
 const KNIGHT_DELTAS: [(i8, i8); 8] = [
@@ -388,6 +389,10 @@ impl Position {
             None
         };
 
+        let mut new_hash = self.hash;
+
+        new_hash ^= black_to_move_key();
+
         let mut castling = self.castling;
         if mover.kind == PieceKind::King {
             match mover.color {
@@ -417,16 +422,67 @@ impl Position {
             castling.black_queenside = false;
         }
 
-        let mut pos = Position {
+        // note: XOR out the old key, XOR in the new one
+        new_hash ^= castling_key(castling_mask(&self.castling));
+        new_hash ^= castling_key(castling_mask(&castling));
+
+        if let Some(old_ep) = self.en_passant {
+            new_hash ^= en_passant_file_key(old_ep.file());
+        }
+
+        if let Some(new_ep) = en_passant {
+            new_hash ^= en_passant_file_key(new_ep.file());
+        }
+        
+        new_hash ^= piece_key(mover, legal.from);
+
+        if legal.flags.contains(MoveFlags::EN_PASSANT) {
+            if let Some(cap_sq) = Square::from_file_rank(legal.to.file(), legal.from.rank()) {
+                if let Some(captured) = self.board.get(legal.to) {
+                    new_hash ^= piece_key(captured, legal.to);
+                }
+            }
+        } else if is_capture {
+            if let Some(captured) = self.board.get(legal.to) {
+                new_hash ^= piece_key(captured, legal.to);
+            }
+        }
+
+        // Arriving piece (promotion changes its kind)
+        let placed = match legal.promotion {
+            Some(kind) => Piece { color: mover.color, kind },
+            None => mover,
+        };
+
+        new_hash ^= piece_key(placed, legal.to);
+
+        // Castling rook relocation
+        if legal.flags.contains(MoveFlags::KING_CASTLE) {
+            let rank = legal.from.rank();
+            let rf = Square::from_file_rank(7, rank).unwrap();
+            let rt = Square::from_file_rank(5, rank).unwrap();
+            let rook = self.board.get(rf).expect("kingside rook present");
+            new_hash ^= piece_key(rook, rf);
+            new_hash ^= piece_key(rook, rt);
+        } else if legal.flags.contains(MoveFlags::QUEEN_CASTLE) {
+            let rank = legal.from.rank();
+            let rf = Square::from_file_rank(0, rank).unwrap();
+            let rt = Square::from_file_rank(3, rank).unwrap();
+            let rook = self.board.get(rf).expect("queenside rook present");
+            new_hash ^= piece_key(rook, rf);
+            new_hash ^= piece_key(rook, rt);
+        }
+
+        let pos = Position {
             board: new_board,
             side_to_move: self.side_to_move.flip(),
             castling,
             en_passant,
             halfmove_clock,
             fullmove_number,
-            hash: 0
+            hash: new_hash
         };
-        pos.hash = pos.zobrist_hash();
+        debug_assert_eq!(pos.hash, pos.zobrist_hash(), "incremental hash diverged");
         Ok(pos)
 
     }
@@ -785,5 +841,38 @@ mod tests {
         // King + rook is sufficient.
         let rook = Position::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1").unwrap();
         assert!(!rook.is_insufficient_material());
+    }
+
+        #[test]
+    fn incremental_hash_matches_oracle_over_random_games() {
+        // Deterministic pseudo-random walk through legal moves. Every apply_move
+        // internally debug_asserts incremental == from-scratch; we also assert
+        // here explicitly for clarity and to cover release-mode test runs.
+        let mut seed: u64 = 0xDEADBEEF;
+        let mut rng = || {
+            // xorshift
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed
+        };
+
+        for _game in 0..50 {
+            let mut pos = Position::starting_position();
+            for _ply in 0..80 {
+                let moves = pos.legal_moves();
+                if moves.is_empty() { break; } // checkmate/stalemate
+                let m = moves[(rng() as usize) % moves.len()];
+                pos = pos.apply_move(m).unwrap();
+                // Explicit oracle agreement (belt and suspenders).
+                assert_eq!(pos.hash, pos.zobrist_hash(),
+                    "hash mismatch after {:?}", m);
+            }
+        }
+    }
+
+    #[test]
+    fn hash_is_set_at_construction() {
+        let s = Position::starting_position();
+        assert_eq!(s.hash, s.zobrist_hash());
+        let f = Position::from_fen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3").unwrap();
+        assert_eq!(f.hash, f.zobrist_hash());
     }
 }

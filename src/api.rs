@@ -52,10 +52,9 @@ fn chess_equivalent(a: &Position, b: &Position) -> bool {
 
 impl PartialEq for chess_position {
     fn eq(&self, other: &Self) -> bool {
-        self.0.zobrist_hash() == other.0.zobrist_hash() && chess_equivalent(&self.0, &other.0)
+        chess_equivalent(&self.0, &other.0)
     }
 }
-
 impl Eq for chess_position {}
 
 impl PartialOrd for chess_position {
@@ -359,6 +358,38 @@ fn chess_game_moves(
         .collect();
     TableIterator::new(rows)
 }
+
+#[pg_extern]
+fn chess_game_positions(
+    game: chess_game,
+) -> TableIterator<'static, (name!(ply, i32), name!(position, chess_position), name!(hash, i64)),> {
+    let g = &game.0;
+    let mut rows: Vec<(i32, chess_position, i64)> = Vec::with_capacity(g.moves.len() + 1);
+
+    let mut pos = g.start.clone();
+    rows.push((0, chess_position(pos.clone()), pos.hash as i64));
+    for (i, &m) in g.moves.iter().enumerate() {
+        pos = pos.apply_move(m).expect("corrupt game history");
+        rows.push(((i + 1) as i32, chess_position(pos.clone()), pos.hash as i64));
+    }
+    TableIterator::new(rows)
+}
+
+#[pg_extern]
+fn chess_placement(position: chess_position) -> Vec<String> {
+    let mut tokens = Vec::with_capacity(32);
+    for i in 0..64u8 {
+        let sq = crate::board::Square(i);
+        if let Some(piece) = position.0.board.get(sq) {
+            let mut token = String::with_capacity(3);
+            token.push(piece.to_fen_char());
+            token.push_str(&sq.to_algebraic());
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
@@ -708,5 +739,119 @@ mod tests {
         let mut ha = DefaultHasher::new(); a.hash(&mut ha);
         let mut hb = DefaultHasher::new(); b.hash(&mut hb);
         assert_eq!(ha.finish(), hb.finish(), "equal values must hash equally");
+    }
+ 
+    #[pg_test]
+    fn game_positions_count_matches_plies() {
+        // A 3-move game has 4 positions (start + 3).
+        let n = Spi::get_one::<i64>(
+            "SELECT count(*) FROM chess_game_positions( \
+                chess_play(chess_play(chess_play( \
+                    chess_new_game(),'e2e4'),'e7e5'),'g1f3'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(n, 4);
+    }
+
+    #[pg_test]
+    fn transposition_shares_hash_in_positions() {
+        // Two move orders reaching the same position must produce a shared hash.
+        // 1.e4 e5 2.Nf3  vs  1.Nf3 e5 2.e4  -> same position after 2 full moves.
+        let same = Spi::get_one::<bool>(
+            "WITH a AS (SELECT hash FROM chess_game_positions( \
+                    chess_play(chess_play(chess_play( \
+                        chess_new_game(),'e2e4'),'e7e5'),'g1f3')) WHERE ply = 3), \
+                  b AS (SELECT hash FROM chess_game_positions( \
+                    chess_play(chess_play(chess_play( \
+                        chess_new_game(),'g1f3'),'e7e5'),'e2e4')) WHERE ply = 3) \
+             SELECT (SELECT hash FROM a) = (SELECT hash FROM b)",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(same, "transposition must share a Zobrist hash");
+    }
+
+    #[pg_test]
+    fn positions_table_lookup_by_hash() {
+        // Build a table, insert an exploded game, look up a position by hash.
+        Spi::run("CREATE TEMP TABLE t_positions (game_id int, ply int, position chess_position, hash bigint)")
+            .expect("create temp table");
+        Spi::run(
+            "INSERT INTO t_positions \
+             SELECT 1, p.ply, p.position, p.hash \
+             FROM chess_game_positions( \
+                chess_play(chess_play(chess_new_game(),'e2e4'),'e7e5')) p",
+        )
+        .expect("insert exploded positions");
+
+        // The position after 1.e4 (ply 1) should be findable by its hash.
+        let found = Spi::get_one::<i64>(
+            "SELECT count(*) FROM t_positions \
+             WHERE hash = chess_position_hash(chess_apply_move(chess_start_position(),'e2e4'))",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(found, 1);
+    }
+
+        #[pg_test]
+    fn placement_startpos_has_32_pieces() {
+        let n = Spi::get_one::<i64>(
+            "SELECT array_length(chess_placement(chess_start_position()), 1)::bigint",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(n, 32);
+    }
+
+    #[pg_test]
+    fn placement_contains_expected_tokens() {
+        // White king on e1, black rook on a8 in the start position.
+        let has = Spi::get_one::<bool>(
+            "SELECT chess_placement(chess_start_position()) @> ARRAY['Ke1','ra8','Pe2']",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(has);
+    }
+
+    #[pg_test]
+    fn placement_reflects_a_move() {
+        // After 1.e4 there is a white pawn on e4 and NONE on e2.
+        let after_e4 = "chess_apply_move(chess_start_position(),'e2e4')";
+        let has_e4 = Spi::get_one::<bool>(
+            &format!("SELECT chess_placement({}) @> ARRAY['Pe4']", after_e4),
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(has_e4);
+
+        let has_e2 = Spi::get_one::<bool>(
+            &format!("SELECT chess_placement({}) @> ARRAY['Pe2']", after_e4),
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert!(!has_e2, "pawn should have left e2");
+    }
+
+    #[pg_test]
+    fn gin_containment_finds_pattern() {
+        Spi::run(
+            "CREATE TEMP TABLE t_pos (ply int, placement text[]); \
+             INSERT INTO t_pos \
+             SELECT p.ply, chess_placement(p.position) \
+             FROM chess_game_positions( \
+                chess_play(chess_play(chess_new_game(),'e2e4'),'e7e5')) p;",
+        )
+        .expect("setup temp table");
+
+        // The e4+e5 center appears at ply 2 (after both moves).
+        let n = Spi::get_one::<i64>(
+            "SELECT count(*) FROM t_pos WHERE placement @> ARRAY['Pe4','pe5']",
+        )
+        .expect("SPI failed")
+        .expect("NULL");
+        assert_eq!(n, 1);
     }
 }

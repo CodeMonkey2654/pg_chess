@@ -105,7 +105,7 @@ impl Position {
             fullmove_number: 1,
             hash: 0,
         };
-        pos.hash = zobrist_hash();
+        pos.hash = pos.zobrist_hash();
         pos
     }
 
