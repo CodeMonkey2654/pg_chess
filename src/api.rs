@@ -12,7 +12,7 @@ use crate::types::Color;
 use pgrx::iter::TableIterator;
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PostgresType, PostgresEq, PostgresHash, PostgresOrd)]
 #[inoutfuncs]
 pub struct chess_position(pub Position);
 
@@ -32,6 +32,52 @@ impl InOutFuncs for chess_position {
 
     fn output(&self, buffer: &mut StringInfo) {
         buffer.push_str(&self.0.to_fen());
+    }
+}
+
+fn chess_equivalent(a: &Position, b: &Position) -> bool {
+    if a.board != b.board {
+        return false;
+    }
+    if a.side_to_move != b.side_to_move {
+        return false;
+    }
+    if a.castling != b.castling {
+        return false;
+    }
+    let a_ep_file = a.en_passant.map(|s| s.file());
+    let b_ep_file = b.en_passant.map(|s| s.file());
+    a_ep_file == b_ep_file
+}
+
+impl PartialEq for chess_position {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.zobrist_hash() == other.0.zobrist_hash() && chess_equivalent(&self.0, &other.0)
+    }
+}
+
+impl Eq for chess_position {}
+
+impl Ord for chess_position {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let h = self.0.zobrist_hash().cmp(&other.0.zobrist_hash());
+        if h != std::cmp::Ordering::Equal {
+            return h;
+        }
+
+        // Rare equal hash determines if they're truly equal, below handles worst case collisions in case I suck at implementing a zobrist hash by hand
+        if chess_equivalent(&self.0, &other.0) {
+            std::cmp::Ordering::Equal
+        } else {
+            self.0.to_fen().cmp(&other.0.to_fen())
+        }
+    }
+}
+
+impl std::hash::Hash for chess_position {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash is hash of zobrist hash to keep consistent with my equality system, it's just life tho
+        self.0.zobrist_hash().hash(state);
     }
 }
 
