@@ -30,6 +30,21 @@ jobs:
       - name: Parse benchmark smoke test
         run: cargo run -p gambit-ingest --release -- bench-parse tests/fixtures/pgn/multi_game.pgn
 
+  studio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: gambit-studio-server check
+        run: cargo check -p gambit-studio-server
+      - name: gambit-studio-ui wasm check
+        run: cargo check -p gambit-studio-ui --target wasm32-unknown-unknown
+      - name: gambit-db-wasm check
+        run: cargo check -p gambit-db-wasm --target wasm32-unknown-unknown
+
   python:
     runs-on: ubuntu-latest
     steps:

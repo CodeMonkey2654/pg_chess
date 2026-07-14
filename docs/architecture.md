@@ -1,48 +1,62 @@
-# Architecture
-
-The project is a Cargo workspace with a Rust chess engine and adapters for PostgreSQL, Python, and UCI.
-
-## Crates
-
-- **gambit-db** (`crates/gambit-db/`): board, FEN, move generation, SAN/PGN, Zobrist hashing, game state. Published Rust API.
-- **gambit-ingest** (`crates/gambit-ingest/`): high-throughput PGN bulk loader for the `gambit` PostgreSQL schema.
-- **pg_chess** (`crates/pg_chess/`): pgrx extension exposing `chess_*` SQL types and functions.
-- **gambit-py** (`crates/gambit-py/`): PyO3 bindings for Python.
-- **gambit-uci** (`crates/gambit-uci/`): UCI protocol helpers (external engine integration).
-
-## Module layout (gambit-db)
-
-- `square`, `board`, `types` — LERF indexing, mailbox board with embedded occupancy bitboards
-- `fen/` — parse, format, validate, `Position` with cached king squares and Zobrist hash
-- `movement` — `Move`, UCI
-- `movegen/` — pseudo-legal generation, bitboard-accelerated attacks, castling, legality filter, make/unmake
-- `san/`, `pgn/` — contextual notation (mainline + nested RAVs)
-- `game` — `ChessGame` with incremental position and hash history
-- `perft` — recursive legal-move correctness counting
-- `tablebase` (feature `tablebase`) — Syzygy `.rtbw`/`.rtbz` probing via `shakmaty-syzygy`
-
-## Public API
-
-Use `gambit_db::prelude` for the common surface: `Position`, `Move`, `ChessGame`, SAN/PGN helpers.
-
-- `Position::from_fen` always runs semantic validation (`Result`)
-- `legal_moves()` returns `Vec<Move>`
-- Optional `tablebase` feature enables `Tablebase::open` / `probe_wdl` / `probe_dtz`
-
-## Dependency direction
-
-```
-gambit-db (engine)
-    ↑
-    ├── pg_chess
-    ├── gambit-ingest
-    ├── gambit-py
-    └── gambit-uci
-```
-
-Adapters depend on `gambit-db`; the engine has no pgrx/pyo3 dependency.
-
-## Error handling
-
-- Rust API: `Result` with `FenError`, `MoveError`, `SanError`, `PgnError`, `MoveParseError`
-- SQL boundary: pgrx `error!()` for invalid input
+# Architecture
+
+The project is a Cargo workspace with a Rust chess engine and adapters for PostgreSQL, Python, UCI, and analysis.
+
+## Crates
+
+- **gambit-db** (`crates/gambit-db/`): board, FEN, move generation, SAN/PGN, Zobrist hashing, game state. Published Rust API.
+- **gambit-analysis** (`crates/gambit-analysis/`): in-memory search engine (negamax, TT, eval, optional corpus book).
+- **gambit-ingest** (`crates/gambit-ingest/`): high-throughput PGN bulk loader for the `gambit` PostgreSQL schema; exports corpus books.
+- **pg_chess** (`crates/pg_chess/`): pgrx extension exposing `chess_*` SQL types and functions.
+- **gambit-py** (`crates/gambit-py/`): PyO3 bindings for Python.
+- **gambit-uci** (`crates/gambit-uci/`): UCI client for external engines and native UCI server (`gambit-analysis` binary).
+
+## Module layout (gambit-db)
+
+- `square`, `board`, `types` — LERF indexing, mailbox board with embedded occupancy bitboards
+- `fen/` — parse, format, validate, `Position` with cached king squares and Zobrist hash
+- `movement` — `Move`, UCI
+- `movegen/` — pseudo-legal generation, bitboard-accelerated attacks, castling, legality filter, make/unmake, `MoveList`
+- `san/`, `pgn/` — contextual notation (mainline + nested RAVs)
+- `game` — `ChessGame` with incremental position and hash history
+- `perft` — recursive legal-move correctness counting
+- `tablebase` (feature `tablebase`) — Syzygy `.rtbw`/`.rtbz` probing via `shakmaty-syzygy`
+
+## Module layout (gambit-analysis)
+
+- `search` — iterative deepening negamax with quiescence
+- `tt` — transposition table keyed on Zobrist hash
+- `eval` — material + piece-square tables
+- `order` — hash move, MVV-LVA, killers, corpus weights
+- `book` — `.gbook` corpus loader (from `gambit.opening_moves` export)
+
+## Public API
+
+Use `gambit_db::prelude` for the common surface: `Position`, `Move`, `ChessGame`, SAN/PGN helpers.
+
+- `Position::from_fen` always runs semantic validation (`Result`)
+- `legal_moves()` returns `Vec<Move>`; `generate_legal_moves()` fills a stack `MoveList` for search
+- Optional `tablebase` feature enables `Tablebase::open` / `probe_wdl` / `probe_dtz`
+
+Use `gambit_analysis::Analyzer` for native search. See [analysis.md](analysis.md).
+
+## Dependency direction
+
+```
+gambit-db (core)
+    ↑
+    ├── gambit-analysis
+    ├── pg_chess
+    ├── gambit-ingest  (+ export-book → .gbook)
+    ├── gambit-py
+    └── gambit-uci     (client + server binary)
+            ↑
+            └── depends on gambit-analysis
+```
+
+Adapters depend on `gambit-db`; the core engine has no pgrx/pyo3 dependency. Corpus statistics are aggregated in PostgreSQL and exported to `.gbook` for in-memory use—search never queries Postgres per node.
+
+## Error handling
+
+- Rust API: `Result` with `FenError`, `MoveError`, `SanError`, `PgnError`, `MoveParseError`
+- SQL boundary: pgrx `error!()` for invalid input

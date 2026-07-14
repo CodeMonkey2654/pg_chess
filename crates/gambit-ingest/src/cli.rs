@@ -63,6 +63,54 @@ pub enum Command {
         #[arg(long, default_value_t = default_workers())]
         workers: usize,
     },
+    /// Export corpus move statistics to a `.gbook` file for gambit-analysis.
+    ExportBook {
+        /// PostgreSQL connection URI.
+        #[arg(long, env = "DATABASE_URL")]
+        pg_uri: String,
+        /// Output book path.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Sync Lichess catalog entries for a year into gambit.filesets.
+    SyncCatalog {
+        /// PostgreSQL connection URI.
+        #[arg(long, env = "DATABASE_URL")]
+        pg_uri: String,
+        /// Source name (e.g. lichess_standard_2024).
+        #[arg(long)]
+        source: String,
+        /// Calendar year to sync (e.g. 2024).
+        #[arg(long)]
+        year: i32,
+    },
+    /// Download and ingest a Lichess fileset.
+    LoadFileset {
+        /// PostgreSQL connection URI.
+        #[arg(long, env = "DATABASE_URL")]
+        pg_uri: String,
+        /// Source name shared by all shards.
+        #[arg(long)]
+        source: String,
+        /// Calendar year to load (all 12 monthly shards).
+        #[arg(long)]
+        year: i32,
+        /// Local cache directory for .pgn.zst downloads.
+        #[arg(long, default_value = ".cache/lichess")]
+        cache_dir: PathBuf,
+        /// Parallel parse workers.
+        #[arg(long, default_value_t = default_workers())]
+        workers: usize,
+        /// Games per COPY batch.
+        #[arg(long, default_value_t = 5000)]
+        batch_games: usize,
+        /// Print per-step timing breakdown.
+        #[arg(long)]
+        profile: bool,
+        /// Load only one fileset id (retry a failed shard).
+        #[arg(long)]
+        fileset_id: Option<i64>,
+    },
 }
 
 fn default_workers() -> usize {

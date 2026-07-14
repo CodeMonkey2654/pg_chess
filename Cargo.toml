@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/gambit-db", "crates/gambit-ingest", "crates/gambit-py", "crates/gambit-uci", "crates/pg_chess"]
+members = [
+    "crates/gambit-db",
+    "crates/gambit-analysis",
+    "crates/gambit-ingest",
+    "crates/gambit-py",
+    "crates/gambit-uci",
+    "crates/gambit-db-wasm",
+    "crates/gambit-studio-server",
+    "crates/gambit-studio-ui",
+    "crates/pg_chess",
+]
 resolver = "2"
 
 [profile.dev]

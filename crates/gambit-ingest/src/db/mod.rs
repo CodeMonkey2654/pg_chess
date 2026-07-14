@@ -1,8 +1,13 @@
 //! Database connection, source management, and partition setup.
 
 mod copy;
+pub mod filesets;
 
 pub use copy::{build_staging_rows, copy_staging_batch};
+pub use filesets::{
+    get_fileset, list_filesets, mark_download_complete, mark_download_started, mark_failed,
+    mark_ingest_complete, mark_ingest_started, record_ingest_run, upsert_fileset, FilesetRow,
+};
 
 use anyhow::{Context, Result};
 use std::time::Instant;
@@ -175,10 +180,7 @@ pub async fn backfill_types(
 ) -> Result<(i64, i64)> {
     let pos_start = Instant::now();
     let pos_row = client
-        .query_one(
-            "SELECT gambit.backfill_positions($1)",
-            &[&source_id],
-        )
+        .query_one("SELECT gambit.backfill_positions($1)", &[&source_id])
         .await
         .context("backfill positions")?;
     let pos_count: i64 = pos_row.get(0);
@@ -200,7 +202,11 @@ pub async fn backfill_types(
     let ensure_indexes = idx_start.elapsed();
 
     if let Some(p) = profile {
-        p.record_count("db.backfill_positions", backfill_positions, pos_count as u64);
+        p.record_count(
+            "db.backfill_positions",
+            backfill_positions,
+            pos_count as u64,
+        );
         p.record_count("db.backfill_plies", backfill_plies, pl_count as u64);
         p.record("db.ensure_position_indexes", ensure_indexes);
     }

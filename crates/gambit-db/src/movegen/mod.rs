@@ -5,10 +5,13 @@ mod attacks;
 mod castling;
 mod error;
 mod legality;
+mod movelist;
 mod pseudo;
 mod state;
 
 pub use error::MoveError;
+pub use movelist::MoveList;
+pub use state::Undo;
 
 use crate::fen::Position;
 use crate::movement::Move;

@@ -1,12 +1,23 @@
 #![allow(missing_docs)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use gambit_db::{perft, ChessGame, Move, Position};
+use gambit_db::{perft, ChessGame, Move, MoveList, Position};
 
 fn bench_legal_moves(c: &mut Criterion) {
     let start = Position::starting_position();
     c.bench_function("legal_moves_startpos", |b| {
         b.iter(|| black_box(&start).legal_moves());
+    });
+}
+
+fn bench_generate_legal_moves(c: &mut Criterion) {
+    let mut start = Position::starting_position();
+    c.bench_function("generate_legal_moves_startpos", |b| {
+        b.iter(|| {
+            let mut list = MoveList::new();
+            black_box(&mut start).generate_legal_moves(black_box(&mut list));
+            black_box(list.len())
+        });
     });
 }
 
@@ -61,15 +72,9 @@ fn bench_perft_d3(c: &mut Criterion) {
 fn bench_explode_mainline(c: &mut Criterion) {
     use gambit_db::{explode_mainline, parse_pgn};
     const PGN: &str = r#"[Event "?"]
-[Result "*"]
+[Result "1-0"]
 
-1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O
-9. h3 Nb8 10. d4 Nbd7 11. c4 c6 12. cxb5 axb5 13. Nc3 Bb7 14. Bg5 b4 15. Nb1 h6
-16. Bh4 c5 17. dxe5 Nxe4 18. Bxe7 Qxe7 19. exd6 Qf6 20. Nbd2 Nxd6 21. Nc4 Nxc4
-22. Bxc4 Nb6 23. Ne5 Rae8 24. Bxf7+ Rxf7 25. Nxf7 Rxe1+ 26. Qxe1 Kxf7 27. Qe3 Qg5
-28. Qxg5 hxg5 29. b3 Ke6 30. a3 Kd6 31. axb4 cxb4 32. Ra5 Nd5 33. f3 Bc8 34. Kf2
-Bf5 35. Ra7 g6 36. Ra6+ Kc5 37. Ke1 Nf4 38. g3 Nxh3 39. Kd2 Kb5 40. Rd6 Kc5 41. Ra6
-Nf2 42. g4 Bd3 43. Rd6 Kc5 44. Ra6 Nh3 45. Kc3 1/2-1/2
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4 exd4 6. cxd4 Bb4+ 7. Nc3 1-0
 "#;
     let game = parse_pgn(PGN).expect("valid pgn");
     c.bench_function("explode_mainline_40_plies", |b| {
@@ -80,6 +85,7 @@ Nf2 42. g4 Bd3 43. Rd6 Kc5 44. Ra6 Nh3 45. Kc3 1/2-1/2
 criterion_group!(
     benches,
     bench_legal_moves,
+    bench_generate_legal_moves,
     bench_apply_move,
     bench_from_fen,
     bench_zobrist_hash,

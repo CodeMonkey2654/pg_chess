@@ -7,12 +7,23 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+/// Provenance metadata for a parsed game within a fileset shard.
+#[derive(Debug, Clone, Default)]
+pub struct GameProvenance {
+    /// SHA-256 of the source archive or file.
+    pub pgn_sha256: Option<Vec<u8>>,
+    /// Byte offset of this game within the decompressed stream.
+    pub pgn_byte_offset: Option<i64>,
+}
+
 /// Result of parsing one game from a PGN chunk.
 pub struct ParsedGame {
     /// Original PGN text for optional storage.
     pub pgn_text: String,
     /// Exploded mainline data.
     pub exploded: ExplodedGame,
+    /// Optional shard provenance.
+    pub provenance: GameProvenance,
 }
 
 /// Statistics from a parse or ingest run.
@@ -61,7 +72,11 @@ pub fn parse_file_parallel(
     let split_start = Instant::now();
     let chunks: Vec<&str> = split_pgn_games(input);
     if let Some(p) = profile {
-        p.record_count("parse.split_games", split_start.elapsed(), chunks.len() as u64);
+        p.record_count(
+            "parse.split_games",
+            split_start.elapsed(),
+            chunks.len() as u64,
+        );
     }
 
     let pool = rayon::ThreadPoolBuilder::new()
@@ -78,7 +93,7 @@ pub fn parse_file_parallel(
     let parsed: Vec<ParsedGame> = pool.install(|| {
         chunks
             .par_iter()
-            .filter_map(|chunk| match parse_one(chunk, store_pgn) {
+            .filter_map(|chunk| match parse_one(chunk, store_pgn, GameProvenance::default()) {
                 Ok(game) => {
                     games_ok.fetch_add(1, Ordering::Relaxed);
                     positions.fetch_add(game.exploded.positions.len() as u64, Ordering::Relaxed);
@@ -114,7 +129,11 @@ pub fn parse_file_parallel(
     ))
 }
 
-fn parse_one(chunk: &str, store_pgn: bool) -> Result<ParsedGame, PgnError> {
+fn parse_one(
+    chunk: &str,
+    store_pgn: bool,
+    provenance: GameProvenance,
+) -> Result<ParsedGame, PgnError> {
     let pgn = parse_pgn(chunk)?;
     let exploded = explode_mainline(&pgn)?;
     Ok(ParsedGame {
@@ -124,6 +143,7 @@ fn parse_one(chunk: &str, store_pgn: bool) -> Result<ParsedGame, PgnError> {
             String::new()
         },
         exploded,
+        provenance,
     })
 }
 
@@ -190,6 +210,7 @@ mod tests {
                     positions: vec![],
                     plies: vec![],
                 },
+                provenance: GameProvenance::default(),
             })
             .collect();
         let batches: Vec<_> = batch_games(games, 2).collect();

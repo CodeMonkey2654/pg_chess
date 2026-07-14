@@ -64,6 +64,18 @@ After ingest, rebuild the `opening_moves` materialized view:
 cargo run -p gambit-ingest -- refresh-stats --pg-uri $env:DATABASE_URL
 ```
 
+## Export corpus book for analysis
+
+After `refresh-stats`, export move statistics for the native analysis engine:
+
+```powershell
+cargo run -p gambit-ingest -- export-book `
+  --pg-uri $env:DATABASE_URL `
+  --output corpus.gbook
+```
+
+Use with the UCI engine: `cargo run -p gambit-uci --bin gambit-analysis --release -- --book corpus.gbook`. See [analysis.md](analysis.md).
+
 ## Query cookbook
 
 ### Exact position lookup by Zobrist hash
@@ -122,4 +134,21 @@ LIMIT 20;
 .\scripts\ingest_bench.ps1
 ```
 
-Reports parse and ingest throughput (games/sec, positions/sec) against a generated fixture.
+## Lichess fileset (full year)
+
+Sync the Lichess catalog and load all 12 monthly shards for a year:
+
+```powershell
+cargo run -p gambit-ingest --release -- sync-catalog `
+  --pg-uri $env:DATABASE_URL `
+  --source lichess_standard_2024 `
+  --year 2024
+
+cargo run -p gambit-ingest --release -- load-fileset `
+  --pg-uri $env:DATABASE_URL `
+  --source lichess_standard_2024 `
+  --year 2024 `
+  --cache-dir .cache/lichess
+```
+
+See [Gambit Studio](studio.md) for the WASM database browser UI.

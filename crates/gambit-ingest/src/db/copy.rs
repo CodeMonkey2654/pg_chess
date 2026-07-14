@@ -1,6 +1,7 @@
 //! PostgreSQL COPY writers for staging tables.
 
 use crate::headers::{copy_field, copy_field_req, StagingGameRow};
+use crate::pipeline::GameProvenance;
 use crate::profile::IngestProfile;
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -188,18 +189,18 @@ pub type StagingBatch = (
 );
 
 /// Build staging rows from parsed exploded games.
-pub fn build_staging_rows(batch: &[(i32, ExplodedGame, Option<String>)]) -> StagingBatch {
+pub fn build_staging_rows(batch: &[(i32, ExplodedGame, Option<String>, GameProvenance)]) -> StagingBatch {
     let mut games = Vec::with_capacity(batch.len());
     let mut positions = Vec::new();
     let mut plies = Vec::new();
 
-    for (batch_seq, exploded, pgn_text) in batch {
+    for (batch_seq, exploded, pgn_text, provenance) in batch {
         games.push(StagingGameRow::from_exploded(
             *batch_seq,
             exploded,
             pgn_text.clone(),
-            None,
-            None,
+            provenance.pgn_sha256.clone(),
+            provenance.pgn_byte_offset,
         ));
         for pos in &exploded.positions {
             positions.push((*batch_seq, pos.clone()));

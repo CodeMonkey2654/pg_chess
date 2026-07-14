@@ -7,5 +7,14 @@ Cargo.lock
 tests/pg_regress/results
 tests/pg_regress/regression.diffs
 tests/pg_regress/regression.out
+
+# Large / generated data
+.cache/
+*.pgn.zst
+*.gbook
+crates/gambit-studio-ui/dist/
+bench_gate_*.out
+
+# Parse benchmarks (multi-MB PGN fixtures)
 tests/fixtures/pgn/bench_10k.pgn
 tests/fixtures/pgn/bench_*.pgn

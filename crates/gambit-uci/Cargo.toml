@@ -3,10 +3,19 @@ name = "gambit-uci"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "UCI protocol client and native analysis server"
+
+[lints.rust]
+missing_docs = "warn"
 
 [lib]
 crate-type = ["rlib"]
 
+[[bin]]
+name = "gambit-analysis"
+path = "src/bin/gambit-analysis.rs"
+
 [dependencies]
+gambit-analysis = { path = "../gambit-analysis" }
 gambit-db = { path = "../gambit-db" }
 thiserror = "2"

@@ -20,6 +20,7 @@ mod zobrist;
 pub mod prelude {
     pub use crate::fen::{CastlingRights, FenError, Position};
     pub use crate::game::{ChessGame, GameStatus};
+    pub use crate::movegen::{MoveList, Undo};
     pub use crate::movement::{Move, MoveFlags, MoveParseError};
     pub use crate::pgn::{
         explode_mainline, game_to_pgn, parse_pgn, parse_pgn_games, split_pgn_games, write_pgn,
@@ -38,7 +39,7 @@ pub use tablebase::{Tablebase, TablebaseError, Wdl};
 
 pub use fen::{CastlingRights, FenError, Position};
 pub use game::{ChessGame, GameStatus};
-pub use movegen::MoveError;
+pub use movegen::{MoveError, MoveList, Undo};
 pub use movement::{Move, MoveFlags, MoveParseError};
 pub use perft::perft;
 pub use pgn::{

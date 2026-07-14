@@ -7,7 +7,11 @@ Chess positions, moves, and games for PostgreSQL — powered by the **gambit-db*
 | Crate | Role |
 |-------|------|
 | [`gambit-db`](crates/gambit-db/) | Core chess engine (`cargo add gambit-db`) |
+| [`gambit-analysis`](crates/gambit-analysis/) | Native analysis engine (negamax, TT, eval) |
 | [`gambit-ingest`](crates/gambit-ingest/) | Bulk PGN ingest CLI (`gambit-ingest import`) |
+| [`gambit-studio-server`](crates/gambit-studio-server/) | REST API for database browser + Lichess ingest jobs |
+| [`gambit-studio-ui`](crates/gambit-studio-ui/) | WASM frontend ([docs/studio.md](docs/studio.md)) |
+| [`gambit-uci`](crates/gambit-uci/) | UCI client + native `gambit-analysis` binary |
 | [`pg_chess`](crates/pg_chess/) | PostgreSQL extension (`CREATE EXTENSION pg_chess`) |
 
 SQL types and functions use chess-native naming: `chess_position`, `chess_to_fen()`, `chess_legal_moves()`, etc.
@@ -40,6 +44,7 @@ SELECT count(*) FROM chess_legal_moves(chess_start_position());
 .\scripts\bench.ps1
 .\scripts\pgrx_test.ps1
 .\scripts\ingest_bench.ps1
+.\scripts\start_studio.ps1
 ```
 
 ```bash
@@ -51,13 +56,22 @@ bash scripts/check.sh
 
 ```bash
 cargo test -p gambit-db
-cargo test -p gambit-db --test perft
+cargo test -p gambit-analysis --test puzzles
 cargo bench -p gambit-db
+cargo bench -p gambit-analysis
 ```
+
+Run the native UCI engine:
+
+```powershell
+cargo run -p gambit-uci --bin gambit-analysis --release
+```
+
+See [docs/analysis.md](docs/analysis.md) for corpus book workflow.
 
 ## Status
 
-Production foundation: workspace split, perft correctness suite, criterion benchmarks with CI regression gates, SAN/PGN, strict FEN, bulk ingest (`gambit-ingest`), Python bindings (`gambit-py`), and UCI wrapper (`gambit-uci`). See `docs/` for architecture, SQL API, [ingest guide](docs/ingest.md), and the [roadmap](roadmap.md).
+Production foundation: workspace split, perft correctness suite, criterion benchmarks with CI regression gates, SAN/PGN, strict FEN, bulk ingest (`gambit-ingest`), native analysis (`gambit-analysis`), Python bindings (`gambit-py`), and UCI client/server (`gambit-uci`). See `docs/` for architecture, SQL API, [ingest guide](docs/ingest.md), [analysis guide](docs/analysis.md), and the [roadmap](roadmap.md).
 
 ### Benchmark regression budget
 

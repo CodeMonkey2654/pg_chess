@@ -1,0 +1,33 @@
+[package]
+name = "gambit-analysis"
+version = "0.1.0"
+edition = "2021"
+description = "Chess analysis engine: negamax search, evaluation, optional corpus book"
+license = "MIT"
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "allow", priority = -1 }
+unwrap_used = "deny"
+expect_used = "allow"
+
+[features]
+default = []
+corpus = []
+tablebase = ["gambit-db/tablebase"]
+
+[dependencies]
+gambit-db = { path = "../gambit-db" }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "search"
+harness = false
+
+[[test]]
+name = "puzzles"
+path = "tests/puzzles.rs"
