@@ -14,11 +14,9 @@ pub fn fen_to_squares(fen: &str) -> [Option<char>; 64] {
         for ch in rank_str.chars() {
             if ch.is_ascii_digit() {
                 file += ch.to_digit(10).unwrap_or(0) as u8;
-            } else if ch.is_ascii_alphabetic() {
-                if file < 8 {
-                    squares[rank as usize * 8 + file as usize] = Some(ch);
-                    file += 1;
-                }
+            } else if ch.is_ascii_alphabetic() && file < 8 {
+                squares[rank * 8 + file as usize] = Some(ch);
+                file += 1;
             }
         }
     }

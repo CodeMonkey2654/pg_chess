@@ -97,6 +97,7 @@ message GamesPage {
   int64 offset = 3;
   int64 limit = 4;
   bool has_more = 5;
+  optional string next_cursor = 6;
 }
 
 message PlyView {
@@ -165,6 +166,7 @@ message PositionGamesPage {
   int64 offset = 3;
   int64 limit = 4;
   bool has_more = 5;
+  optional string next_cursor = 6;
 }
 
 message OpeningMoveStat {
@@ -185,6 +187,23 @@ message BenchResult {
 
 message BenchResponse {
   repeated BenchResult results = 1;
+}
+
+message GetPositionEvalRequest {
+  string fen = 1;
+  int64 hash = 2;
+  int32 depth = 3;
+  int32 profile_id = 4;
+}
+
+message PositionEvalResponse {
+  int64 hash = 1;
+  int32 eval_cp = 2;
+  optional int32 mate_plies = 3;
+  string best_move = 4;
+  int32 depth = 5;
+  string source = 6;
+  bool cached = 7;
 }
 
 message LoadFilesetRequest {

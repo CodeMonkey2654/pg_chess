@@ -1,6 +1,6 @@
 //! Gambit Studio gRPC API library.
 
-mod db;
+pub mod db;
 mod grpc;
 mod pool;
 

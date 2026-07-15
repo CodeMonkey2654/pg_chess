@@ -10,7 +10,7 @@ const MAGIC: &[u8; 4] = b"GBOK";
 const VERSION: u32 = 1;
 
 /// In-memory corpus move statistics keyed by position Zobrist hash.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CorpusBook {
     /// Sorted (hash, start, len) index into `moves`.
     index: Vec<(u64, u32, u32)>,

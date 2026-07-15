@@ -32,9 +32,7 @@ pub struct StagingPlyAnalysisRow {
 }
 
 /// Build staging rows from analyzed games.
-pub fn build_staging_rows(
-    games: &[(i64, &GameReviewSummary)],
-) -> Vec<StagingPlyAnalysisRow> {
+pub fn build_staging_rows(games: &[(i64, &GameReviewSummary)]) -> Vec<StagingPlyAnalysisRow> {
     let total_plies: usize = games.iter().map(|(_, s)| s.plies.len()).sum();
     let mut rows = Vec::with_capacity(total_plies);
     for (game_id, summary) in games {
@@ -93,7 +91,9 @@ pub async fn copy_staging_ply_analysis(
     sink.send(Bytes::from(data))
         .await
         .context("COPY staging_ply_analysis send")?;
-    sink.close().await.context("COPY staging_ply_analysis close")?;
+    sink.close()
+        .await
+        .context("COPY staging_ply_analysis close")?;
     Ok(())
 }
 

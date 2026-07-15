@@ -80,7 +80,10 @@ mod tests {
         let entries = parse_catalog(&text, Some(2024));
         assert_eq!(entries.len(), 4);
         assert_eq!(entries[0].period_label, "2024-01");
-        assert_eq!(entries.last().unwrap().period_label, "2024-12");
+        assert_eq!(
+            entries.last().expect("catalog has entries").period_label,
+            "2024-12"
+        );
     }
 
     #[test]

@@ -12,7 +12,11 @@ pub struct EnginePool {
 
 impl EnginePool {
     /// Spawn `workers` engine processes and complete UCI handshake for each.
-    pub fn spawn(command: impl AsRef<str>, args: &[&str], workers: usize) -> Result<Self, UciError> {
+    pub fn spawn(
+        command: impl AsRef<str>,
+        args: &[&str],
+        workers: usize,
+    ) -> Result<Self, UciError> {
         let workers = workers.max(1);
         let mut engines = Vec::with_capacity(workers);
         for _ in 0..workers {

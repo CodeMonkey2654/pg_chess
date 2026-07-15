@@ -74,7 +74,7 @@ pub fn ChessBoard(
                     piece: p,
                     rook,
                 }));
-                let set_anim = set_animation.clone();
+                let set_anim = set_animation;
                 leptos::task::spawn_local(async move {
                     gloo_timers::future::TimeoutFuture::new(200).await;
                     set_anim.set(None);
@@ -132,7 +132,7 @@ pub fn ChessBoard(
             on_move.run(uci);
         } else {
             set_shake.set(true);
-            let set_sh = set_shake.clone();
+            let set_sh = set_shake;
             leptos::task::spawn_local(async move {
                 gloo_timers::future::TimeoutFuture::new(300).await;
                 set_sh.set(false);
@@ -314,7 +314,7 @@ pub fn ChessBoard(
                         let style = format!(
                             "--from-row:{from_row};--from-col:{from_col};--dx:{dx}%;--dy:{dy}%"
                         );
-                        let rook_overlay = a.rook.map(|(rf, rt, rp)| {
+                        let rook_overlay = a.rook.and_then(|(rf, rt, rp)| {
                             let rf_idx = algebraic_to_index(&rf)?;
                             let rt_idx = algebraic_to_index(&rt)?;
                             let (rfr, rfc) = idx_to_visual(rf_idx, white_bottom);
@@ -329,7 +329,7 @@ pub fn ChessBoard(
                                     <PieceSvg piece=rp/>
                                 </div>
                             })
-                        }).flatten();
+                        });
                         Some(view! {
                             <>
                                 <div class="anim-piece" style=style>

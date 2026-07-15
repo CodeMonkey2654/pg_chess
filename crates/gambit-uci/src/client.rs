@@ -157,7 +157,10 @@ impl UciEngine {
             match self.read_line_with_timeout(&mut line, deadline)? {
                 true => {
                     if let Some(result) = parse_bestmove_line(&line)? {
-                        return Ok(crate::parse::SearchWithInfo { result, info: last_info });
+                        return Ok(crate::parse::SearchWithInfo {
+                            result,
+                            info: last_info,
+                        });
                     }
                     if let Some(info) = parse_info_line(&line)? {
                         if info.depth.is_some() {

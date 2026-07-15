@@ -209,6 +209,7 @@ pub async fn mark_failed(client: &Client, fileset_id: i64, message: &str) -> Res
 }
 
 /// Record an ingest run for performance tracking.
+#[allow(clippy::too_many_arguments)]
 pub async fn record_ingest_run(
     client: &Client,
     fileset_id: i64,

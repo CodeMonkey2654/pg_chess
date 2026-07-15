@@ -13,6 +13,7 @@ console_error_panic_hook = "0.1"
 gambit-db-wasm = { path = "../gambit-db-wasm" }
 gambit-proto = { path = "../gambit-proto" }
 gloo-timers = { version = "0.3", features = ["futures"] }
+futures = "0.3"
 js-sys = "0.3"
 leptos = { version = "0.7", features = ["csr"] }
 prost = "0.13"

@@ -56,7 +56,7 @@ impl IngestProfile {
             .iter()
             .filter(|(name, _)| *name != "ingest.total" && *name != "backfill.total")
             .collect();
-        rows.sort_by(|a, b| b.1.duration.cmp(&a.1.duration));
+        rows.sort_by_key(|b| std::cmp::Reverse(b.1.duration));
 
         println!();
         println!("=== Ingest Profile ===");

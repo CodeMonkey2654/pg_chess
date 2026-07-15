@@ -49,11 +49,7 @@ fn format_info_struct(info: &Info) -> String {
 
 fn nps(nodes: Option<u64>, time_ms: u64) -> u64 {
     nodes.map_or(0, |n| {
-        if time_ms == 0 {
-            0
-        } else {
-            n.saturating_mul(1000) / time_ms
-        }
+        n.saturating_mul(1000).checked_div(time_ms).unwrap_or(0)
     })
 }
 

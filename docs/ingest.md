@@ -161,7 +161,7 @@ cargo run -p gambit-ingest --release -- export-book --pg-uri $env:DATABASE_URL -
 
 ## Game analysis
 
-Analyze games with Stockfish (or native search fallback) and persist eval/classification on `gambit.plies`:
+Analyze games with the native Gambit engine (corpus book + Syzygy + search) and persist eval/classification on `gambit.plies`:
 
 ```powershell
 # Single game
@@ -178,6 +178,6 @@ cargo run -p gambit-ingest --release -- analyze-batch `
   --depth 12
 ```
 
-Set `GAMBIT_STOCKFISH_PATH` to your Stockfish binary. Results roll up to `gambit.games` (accuracy, blunder counts) via `gambit.rollup_game_analysis()`.
+Set `GAMBIT_CORPUS_BOOK` to a `.gbook` export and optionally `GAMBIT_SYZYGY_PATH` for endgame tablebases. Results roll up to `gambit.games` (accuracy, blunder counts) via `gambit.rollup_game_analysis()`.
 
 See [Gambit Studio](studio.md) for the WASM database browser UI.

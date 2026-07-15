@@ -8,6 +8,7 @@ use std::path::PathBuf;
 #[command(name = "gambit-ingest", version, about)]
 pub struct Cli {
     #[command(subcommand)]
+    /// Subcommand to run.
     pub command: Command,
 }
 
@@ -122,9 +123,12 @@ pub enum Command {
         /// Search depth in plies.
         #[arg(long, default_value_t = 12)]
         depth: u32,
-        /// Stockfish executable path (default: stockfish or GAMBIT_STOCKFISH_PATH).
-        #[arg(long, env = "GAMBIT_STOCKFISH_PATH")]
-        engine: Option<String>,
+        /// Corpus book path (.gbook export).
+        #[arg(long, env = "GAMBIT_CORPUS_BOOK")]
+        corpus_book: Option<String>,
+        /// Syzygy tablebase directory.
+        #[arg(long, env = "GAMBIT_SYZYGY_PATH")]
+        syzygy: Option<String>,
     },
     /// Analyze a batch of unanalyzed games for a source.
     AnalyzeBatch {
@@ -140,9 +144,12 @@ pub enum Command {
         /// Search depth in plies.
         #[arg(long, default_value_t = 12)]
         depth: u32,
-        /// Stockfish executable path.
-        #[arg(long, env = "GAMBIT_STOCKFISH_PATH")]
-        engine: Option<String>,
+        /// Corpus book path (.gbook export).
+        #[arg(long, env = "GAMBIT_CORPUS_BOOK")]
+        corpus_book: Option<String>,
+        /// Syzygy tablebase directory.
+        #[arg(long, env = "GAMBIT_SYZYGY_PATH")]
+        syzygy: Option<String>,
     },
 }
 

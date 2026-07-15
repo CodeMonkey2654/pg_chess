@@ -49,7 +49,7 @@ impl IngestService for IngestWorker {
         let year = req.year;
 
         let count = async {
-            let mut session = IngestSession::connect(&pg_uri)
+            let session = IngestSession::connect(&pg_uri)
                 .await
                 .map_err(|e| Status::internal(e.to_string()))?;
             session
@@ -86,7 +86,7 @@ impl IngestService for IngestWorker {
         let year = req.year;
 
         {
-            let mut session = IngestSession::connect(&pg_uri)
+            let session = IngestSession::connect(&pg_uri)
                 .await
                 .map_err(|e| Status::internal(e.to_string()))?;
             session
@@ -156,7 +156,14 @@ impl IngestService for IngestWorker {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
         let results = session
-            .load_fileset_year(&req.source, req.year, &cache_dir, &options, &mut None, false)
+            .load_fileset_year(
+                &req.source,
+                req.year,
+                &cache_dir,
+                &options,
+                &mut None,
+                false,
+            )
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
         let total_games: u64 = results.iter().map(|r| r.games_loaded as u64).sum();

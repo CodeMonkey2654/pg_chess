@@ -75,11 +75,10 @@ mod tests {
 
     #[pg_test]
     fn accuracy_all_best() {
-        let acc = Spi::get_one::<f32>(
-            "SELECT chess_accuracy_from_classes(ARRAY['best','best']::text[])",
-        )
-        .expect("spi")
-        .expect("value");
+        let acc =
+            Spi::get_one::<f32>("SELECT chess_accuracy_from_classes(ARRAY['best','best']::text[])")
+                .expect("spi")
+                .expect("value");
         assert!((acc - 100.0).abs() < 0.01);
     }
 

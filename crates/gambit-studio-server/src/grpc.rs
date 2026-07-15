@@ -1,21 +1,21 @@
 //! gRPC StudioService implementation.
 
 use crate::db::{
-    games_by_position, get_game, hash_from_fen, health, list_filesets, list_sources_fast,
-    lookup_position, opening_stats, run_analyze_game, run_bench, search_games, source_detail,
-    source_id_by_name,
+    games_by_position, get_game, get_position_eval, hash_from_fen, health, list_filesets,
+    list_sources_fast, lookup_position, opening_stats, run_analyze_game, run_bench, search_games,
+    source_detail, source_id_by_name,
 };
 use crate::pool::PgPool;
 use gambit_proto::ingest_service_client::IngestServiceClient;
 use gambit_proto::studio_service_server::StudioService;
 use gambit_proto::{
     AnalyzeGameRequest, AnalyzeGameResponse, BenchResponse, Empty, GameDetail, GamesPage,
-    GetActiveJobRequest, GetGameRequest, GetJobRequest, GetSourceSummaryRequest,
+    GetActiveJobRequest, GetGameRequest, GetJobRequest, GetPositionEvalRequest, GetSourceSummaryRequest,
     HashFromFenRequest, HashFromFenResponse, HealthResponse, JobStarted, JobStatus,
     ListFilesetsRequest, ListFilesetsResponse, ListSourcesResponse, LoadYearRequest,
     LookupPositionRequest, LookupPositionResponse, OpeningStatsRequest, OpeningStatsResponse,
-    OptionalJobStatus, PositionGamesPage, SearchGamesRequest, SourceDetail, SyncCatalogRequest,
-    SyncCatalogResponse, WatchJobRequest,
+    OptionalJobStatus, PositionEvalResponse, PositionGamesPage, SearchGamesRequest, SourceDetail,
+    SyncCatalogRequest, SyncCatalogResponse, WatchJobRequest,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -122,6 +122,8 @@ impl StudioService for StudioServer {
             req.source_id,
             req.offset,
             req.limit,
+            req.include_total.unwrap_or(false),
+            req.cursor.as_deref(),
         )
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
@@ -132,9 +134,9 @@ impl StudioService for StudioServer {
         &self,
         request: Request<GetGameRequest>,
     ) -> Result<Response<GameDetail>, Status> {
-        let game_id = request.into_inner().game_id;
+        let req = request.into_inner();
         let client = self.client().await?;
-        let game = get_game(&client, game_id)
+        let game = get_game(&client, req.game_id, req.max_plies)
             .await
             .map_err(|e| Status::internal(e.to_string()))?
             .ok_or_else(|| Status::not_found("game not found"))?;
@@ -147,7 +149,14 @@ impl StudioService for StudioServer {
     ) -> Result<Response<PositionGamesPage>, Status> {
         let req = request.into_inner();
         let client = self.client().await?;
-        let page = games_by_position(&client, req.hash, req.offset, req.limit)
+        let page = games_by_position(
+            &client,
+            req.hash,
+            req.source_id,
+            req.offset,
+            req.limit,
+            req.cursor.as_deref(),
+        )
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(page))
@@ -207,6 +216,29 @@ impl StudioService for StudioServer {
         Ok(Response::new(resp))
     }
 
+    async fn get_position_eval(
+        &self,
+        request: Request<GetPositionEvalRequest>,
+    ) -> Result<Response<PositionEvalResponse>, Status> {
+        let req = request.into_inner();
+        let depth = if req.depth == 0 { 10 } else { req.depth as u32 };
+        let profile_id = if req.profile_id == 0 {
+            1_i16
+        } else {
+            req.profile_id as i16
+        };
+        let hash = if req.hash != 0 {
+            req.hash
+        } else {
+            hash_from_fen(&req.fen).map_err(|e| Status::invalid_argument(e.to_string()))?
+        };
+        let client = self.client().await?;
+        let resp = get_position_eval(&client, &req.fen, hash, depth, profile_id)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(resp))
+    }
+
     async fn sync_catalog(
         &self,
         request: Request<SyncCatalogRequest>,
@@ -255,6 +287,7 @@ impl StudioService for StudioServer {
     ) -> Result<Response<Self::WatchJobStream>, Status> {
         let mut client = self.ingest.clone();
         let response = client.watch_job(request).await.map_err(map_ingest_status)?;
+        #[allow(clippy::result_large_err)]
         let stream = response
             .into_inner()
             .map(|item| item.map_err(|e| Status::internal(e.to_string())));

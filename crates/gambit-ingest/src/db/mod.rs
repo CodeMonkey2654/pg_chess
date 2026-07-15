@@ -5,11 +5,11 @@ pub mod filesets;
 mod staging_lock;
 
 pub use copy::{build_staging_rows, copy_staging_batch};
-pub use staging_lock::{acquire_staging_lock, release_staging_lock};
 pub use filesets::{
     get_fileset, list_filesets, mark_download_complete, mark_download_started, mark_failed,
     mark_ingest_complete, mark_ingest_started, record_ingest_run, upsert_fileset, FilesetRow,
 };
+pub use staging_lock::{acquire_staging_lock, release_staging_lock};
 
 use anyhow::{Context, Result};
 use std::time::Instant;
@@ -39,12 +39,12 @@ pub async fn ensure_source(client: &Client, name: &str) -> Result<i32> {
     Ok(id)
 }
 
-/// Refresh opening move statistics materialized view.
+/// Refresh opening move statistics and position game counts.
 pub async fn refresh_opening_stats(client: &Client) -> Result<()> {
     client
-        .batch_execute("REFRESH MATERIALIZED VIEW gambit.opening_moves")
+        .batch_execute("SELECT gambit.refresh_explorer_stats()")
         .await
-        .context("refresh opening_moves")?;
+        .context("refresh explorer stats")?;
     Ok(())
 }
 
@@ -163,6 +163,19 @@ pub async fn flush_staging_batch(
 
     tx.commit().await.context("commit batch tx")?;
     let truncate_tx = commit_start.elapsed();
+
+    client
+        .execute(
+            "SELECT gambit.increment_source_rollups($1, $2, $3, $4)",
+            &[
+                &source_id,
+                &(game_count as i64),
+                &(pos as i64),
+                &(pl as i64),
+            ],
+        )
+        .await
+        .context("increment source rollups")?;
 
     if let Some(p) = profile {
         p.record("db.tx_setup", tx_setup);

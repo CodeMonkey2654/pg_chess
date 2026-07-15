@@ -29,9 +29,9 @@ pub fn prefetch_download(url: &str, filename: &str, cache_dir: &Path) -> Prefetc
     let url = url.to_string();
     let filename = filename.to_string();
     let cache_dir = cache_dir.to_path_buf();
-    tokio::spawn(async move {
-        download_to_cache_with_retries(&url, &filename, &cache_dir, None).await
-    })
+    tokio::spawn(
+        async move { download_to_cache_with_retries(&url, &filename, &cache_dir, None).await },
+    )
 }
 
 fn format_gib(bytes: u64) -> f64 {
@@ -39,7 +39,11 @@ fn format_gib(bytes: u64) -> f64 {
 }
 
 /// True when an on-disk cache file looks complete for ingest.
-pub fn cache_is_complete(path: &Path, known_byte_size: Option<i64>, known_sha256: Option<&[u8]>) -> bool {
+pub fn cache_is_complete(
+    path: &Path,
+    known_byte_size: Option<i64>,
+    known_sha256: Option<&[u8]>,
+) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
@@ -195,10 +199,7 @@ pub async fn download_to_cache(
 }
 
 fn part_path(dest: &Path) -> PathBuf {
-    let name = dest
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("shard");
+    let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("shard");
     dest.with_file_name(format!("{name}.part"))
 }
 
@@ -230,7 +231,7 @@ mod tests {
 
     #[test]
     fn min_shard_bytes_threshold() {
-        assert!(MIN_COMPLETE_SHARD_BYTES > 1_000_000_000);
+        const { assert!(MIN_COMPLETE_SHARD_BYTES > 1_000_000_000) };
     }
 
     #[test]

@@ -29,6 +29,10 @@ name = "search"
 harness = false
 
 [[test]]
+name = "epd"
+path = "tests/epd.rs"
+
+[[test]]
 name = "puzzles"
 path = "tests/puzzles.rs"
 

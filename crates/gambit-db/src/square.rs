@@ -75,6 +75,18 @@ impl Square {
     }
 }
 
+/// Offset a square by file and rank deltas. Returns `None` if the result leaves the board.
+#[inline]
+pub(crate) fn offset(sq: Square, file_offset: i8, rank_offset: i8) -> Option<Square> {
+    let file = sq.file() as i8 + file_offset;
+    let rank = sq.rank() as i8 + rank_offset;
+    if (0..8).contains(&file) && (0..8).contains(&rank) {
+        Square::from_file_rank(file as u8, rank as u8)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,17 +123,5 @@ mod tests {
         assert_eq!(Square::from_algebraic("e"), None);
         assert_eq!(Square::from_algebraic("e44"), None);
         assert_eq!(Square::from_algebraic(""), None);
-    }
-}
-
-/// Offset a square by file and rank deltas. Returns `None` if the result leaves the board.
-#[inline]
-pub(crate) fn offset(sq: Square, file_offset: i8, rank_offset: i8) -> Option<Square> {
-    let file = sq.file() as i8 + file_offset;
-    let rank = sq.rank() as i8 + rank_offset;
-    if (0..8).contains(&file) && (0..8).contains(&rank) {
-        Square::from_file_rank(file as u8, rank as u8)
-    } else {
-        None
     }
 }

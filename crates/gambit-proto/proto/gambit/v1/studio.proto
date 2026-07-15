@@ -17,6 +17,7 @@ service StudioService {
   rpc OpeningStats(OpeningStatsRequest) returns (OpeningStatsResponse);
   rpc RunBench(Empty) returns (BenchResponse);
   rpc AnalyzeGame(AnalyzeGameRequest) returns (AnalyzeGameResponse);
+  rpc GetPositionEval(GetPositionEvalRequest) returns (PositionEvalResponse);
 
   // Ingest RPCs proxied to gambit-ingest-worker
   rpc SyncCatalog(SyncCatalogRequest) returns (SyncCatalogResponse);
@@ -50,16 +51,21 @@ message SearchGamesRequest {
   optional int32 source_id = 2;
   int64 offset = 3;
   int64 limit = 4;
+  optional bool include_total = 5;
+  optional string cursor = 6;
 }
 
 message GetGameRequest {
   int64 game_id = 1;
+  optional int32 max_plies = 2;
 }
 
 message GamesByPositionRequest {
   int64 hash = 1;
   int64 offset = 2;
   int64 limit = 3;
+  optional int32 source_id = 4;
+  optional string cursor = 5;
 }
 
 message LookupPositionRequest {

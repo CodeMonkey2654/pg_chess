@@ -27,9 +27,8 @@ bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
-gambit-db = { path = "../gambit-db" }
-gambit-analysis = { path = "../gambit-analysis" }
-gambit-uci = { path = "../gambit-uci" }
+gambit-db = { path = "../gambit-db", features = ["tablebase"] }
+gambit-analysis = { path = "../gambit-analysis", features = ["tablebase"] }
 hex = "0.4"
 indicatif = "0.17"
 rayon = "1"

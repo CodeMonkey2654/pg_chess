@@ -2,8 +2,8 @@ use pgrx::prelude::*;
 
 ::pgrx::pg_module_magic!(name, version);
 
-mod api;
 mod analysis;
+mod api;
 
 #[pg_extern]
 fn pg_chess_version() -> &'static str {

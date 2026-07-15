@@ -5,12 +5,18 @@ use crate::eval;
 use crate::limits::SearchLimits;
 use crate::order::{order_moves, Killers};
 use crate::report::{Analysis, Score};
+use crate::see;
 use crate::tt::TranspositionTable;
 use gambit_db::{Move, MoveFlags, MoveList, Position};
 use std::time::{Duration, Instant};
 
 const MATE_SCORE: i32 = 30_000;
 const MAX_PLY: u32 = 64;
+const ENDGAME_PIECES: u32 = 6;
+
+fn count_pieces(pos: &Position) -> u32 {
+    pos.board.iter_occupied().count() as u32
+}
 
 /// Chess analysis engine.
 pub struct Analyzer {
@@ -95,7 +101,17 @@ impl Analyzer {
             if self.should_stop() {
                 break;
             }
-            let score = self.negamax(&mut search_pos, depth, -MATE_SCORE, MATE_SCORE, 0);
+            let window = if depth >= 4 && self.depth_reached > 0 {
+                50
+            } else {
+                MATE_SCORE
+            };
+            let alpha = self.best_score.saturating_sub(window);
+            let beta = self.best_score.saturating_add(window);
+            let mut score = self.negamax(&mut search_pos, depth, alpha, beta, 0);
+            if score <= alpha || score >= beta {
+                score = self.negamax(&mut search_pos, depth, -MATE_SCORE, MATE_SCORE, 0);
+            }
             if self.should_stop() {
                 break;
             }
@@ -200,6 +216,23 @@ impl Analyzer {
             return self.quiescence(pos, alpha, beta, ply);
         }
 
+        let in_check = pos.is_in_check(pos.side_to_move);
+
+        // Null-move pruning (skip when in check or low material).
+        if depth >= 3 && !in_check && ply > 0 && count_pieces(pos) > ENDGAME_PIECES {
+            let null_depth = depth - 3;
+            let saved_stm = pos.side_to_move;
+            let saved_hash = pos.hash;
+            pos.side_to_move = saved_stm.flip();
+            pos.hash = pos.zobrist_hash();
+            let score = -self.negamax(pos, null_depth, -beta, -beta + 1, ply + 1);
+            pos.side_to_move = saved_stm;
+            pos.hash = saved_hash;
+            if score >= beta {
+                return beta;
+            }
+        }
+
         let key = pos.hash;
         if let Some(score) = self.tt.probe(key, depth as i32, alpha, beta) {
             return score;
@@ -225,10 +258,30 @@ impl Analyzer {
         let mut moves_searched = 0;
 
         for m in moves.as_slice() {
+            let is_capture = m.flags.contains(MoveFlags::CAPTURE);
+            let is_quiet = !is_capture && !m.flags.contains(MoveFlags::PROMOTION);
+
+            if is_capture && see::see(pos, *m) < 0 {
+                continue;
+            }
+
+            let mut reduction = 0u32;
+            if depth >= 3 && moves_searched >= 3 && is_quiet && !in_check {
+                reduction = 1;
+                if moves_searched >= 6 && depth >= 5 {
+                    reduction = 2;
+                }
+            }
+
+            let search_depth = depth - 1 - reduction;
+
             let Ok(undo) = pos.make_move(*m) else {
                 continue;
             };
-            let score = -self.negamax(pos, depth - 1, -beta, -alpha, ply + 1);
+            let mut score = -self.negamax(pos, search_depth, -beta, -alpha, ply + 1);
+            if reduction > 0 && score > alpha {
+                score = -self.negamax(pos, depth - 1, -beta, -alpha, ply + 1);
+            }
             pos.unmake_move(undo);
 
             if self.should_stop() {
@@ -296,6 +349,9 @@ impl Analyzer {
         order_moves(&mut captures, pos, ply, None, &self.killers, None);
 
         for m in captures.as_slice() {
+            if see::see(pos, *m) < 0 {
+                continue;
+            }
             let Ok(undo) = pos.make_move(*m) else {
                 continue;
             };

@@ -135,7 +135,7 @@ mod tests {
         let out = write_pgn_movetext(&game.headers, &game.movetext);
         assert!(out.contains("1. d4"));
         assert!(out.contains("d5"));
-        let reparsed = parse_pgn(&format!("{out}")).expect("reparse");
+        let reparsed = parse_pgn(&out).expect("reparse");
         assert_eq!(reparsed.movetext, game.movetext);
     }
 }

@@ -24,6 +24,15 @@ impl NativeEvaluator {
             depth,
         }
     }
+
+    /// Create evaluator with a shared corpus book for opening move ordering.
+    pub fn with_book(depth: u32, book: std::sync::Arc<crate::CorpusBook>) -> Self {
+        let book = (*book).clone();
+        Self {
+            analyzer: crate::Analyzer::new().with_book(book),
+            depth,
+        }
+    }
 }
 
 impl PositionEvaluator for NativeEvaluator {

@@ -12,7 +12,7 @@ The hybrid analysis pipeline is end-to-end for a single game:
 
 - **Extension** — `pg_chess` analysis types + SQL functions (`chess_move_class`, `chess_classify_cp_loss`, …)
 - **Schema** — `005_analysis.sql` / `006_staging_analysis_text.sql` columns on `plies`/`games`, staging merge
-- **Compute** — `gambit-ingest analyze-game` with Stockfish (or native fallback)
+- **Compute** — `gambit-ingest analyze-game` with native GambitEvaluator (corpus + Syzygy + search)
 - **Studio** — eval bar, move colors, accuracy, Analyze button; gRPC `AnalyzeGame`
 
 Ingest, explorer, and Lichess shard loading were already working. Analysis batch jobs, `position_evals` cache, Syzygy, and e2e CI are not.
@@ -130,9 +130,9 @@ Custom grpc-web encoder (`gambit-studio-ui/src/grpc_web.rs`) and local FEN board
 
 | Feature | Effort | Notes |
 |---------|--------|-------|
-| **`position_evals` read path** | M | Hash lookup before Stockfish; `upsert` on miss |
+| **`position_evals` read path** | Done | `GetPositionEval` RPC + cache upsert on miss |
 | **Live position analyze button** | M | Explorer + replay share cache |
-| **Syzygy in `HybridEvaluator`** | M | `gambit-db/tablebase` feature; endgame routing |
+| **Syzygy in `GambitEvaluator`** | M | `gambit-db/tablebase` feature; endgame routing |
 | **Corpus book in Explorer** | S | Surface `opening_moves` + `.gbook` export in UI |
 
 ### Ingest scale (medium term)
@@ -146,7 +146,7 @@ Custom grpc-web encoder (`gambit-studio-ui/src/grpc_web.rs`) and local FEN board
 
 ### Native engine (long term)
 
-LMR, null-move, SEE, tapered eval, multi-PV root — improves offline fallback when Stockfish absent. Corpus + Syzygy routing in `HybridEvaluator` (`gambit-ingest/src/analyze/uci.rs`).
+LMR, null-move, SEE, tapered eval — native search in `gambit-analysis`. Corpus + Syzygy routing in `GambitEvaluator` (`gambit-ingest/src/analyze/gambit_eval.rs`).
 
 ### Quality & ops
 

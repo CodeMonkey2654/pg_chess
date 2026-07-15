@@ -1,23 +1,25 @@
 //! Game analysis pipeline: load plies, evaluate, bulk-write to DB.
 
 mod copy;
-mod uci;
+pub mod gambit_eval;
 
 use anyhow::{Context, Result};
 use copy::flush_analysis_batch;
-use gambit_analysis::{GameAnalyzer, GamePly, GameReviewSummary};
 use futures::stream::{self, StreamExt};
+use gambit_analysis::{GameAnalyzer, GamePly, GameReviewSummary};
+use gambit_eval::GambitEvaluator;
 use tokio_postgres::Client;
-use uci::HybridEvaluator;
 
 /// Options for analyzing games.
 #[derive(Debug, Clone)]
 pub struct AnalyzeOptions {
     /// Search depth (plies).
     pub depth: u32,
-    /// Optional Stockfish path; native search if absent.
-    pub engine_path: Option<String>,
-    /// Parallel engine workers when using Stockfish.
+    /// Path to `.gbook` corpus export.
+    pub corpus_book: Option<String>,
+    /// Syzygy tablebase directory.
+    pub syzygy_path: Option<String>,
+    /// Parallel native analysis workers.
     pub workers: usize,
 }
 
@@ -25,7 +27,8 @@ impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
             depth: 12,
-            engine_path: std::env::var("GAMBIT_STOCKFISH_PATH").ok(),
+            corpus_book: std::env::var("GAMBIT_CORPUS_BOOK").ok(),
+            syzygy_path: std::env::var("GAMBIT_SYZYGY_PATH").ok(),
             workers: std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(2),
@@ -90,11 +93,7 @@ async fn write_analysis(
     flush_analysis_batch(client, source_id, games).await
 }
 
-async fn load_game_plies(
-    client: &Client,
-    game_id: i64,
-    source_id: i32,
-) -> Result<Vec<GamePly>> {
+async fn load_game_plies(client: &Client, game_id: i64, source_id: i32) -> Result<Vec<GamePly>> {
     let start_fen: String = client
         .query_opt(
             "SELECT fen FROM gambit.positions
@@ -103,9 +102,7 @@ async fn load_game_plies(
         )
         .await?
         .map(|r| r.get(0))
-        .unwrap_or_else(|| {
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string()
-        });
+        .unwrap_or_else(|| "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string());
 
     let move_rows = client
         .query(
@@ -127,7 +124,11 @@ async fn load_game_plies(
         });
         let next = gambit_db::Position::from_fen(&fen)
             .ok()
-            .and_then(|pos| gambit_db::Move::from_uci(&uci).ok().and_then(|mv| pos.apply_move(mv).ok()))
+            .and_then(|pos| {
+                gambit_db::Move::from_uci(&uci)
+                    .ok()
+                    .and_then(|mv| pos.apply_move(mv).ok())
+            })
             .map(|p| p.to_fen())
             .unwrap_or(fen);
         fen = next;
@@ -136,11 +137,9 @@ async fn load_game_plies(
 }
 
 fn run_analysis(plies: &[GamePly], options: &AnalyzeOptions) -> Result<GameReviewSummary> {
-    let evaluator = HybridEvaluator::new(options)?;
+    let evaluator = GambitEvaluator::new(options)?;
     let mut analyzer = GameAnalyzer::new(evaluator);
-    analyzer
-        .analyze(plies)
-        .map_err(|e| anyhow::anyhow!(e))
+    analyzer.analyze(plies).map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Analyze up to `limit` pending games for a source.
@@ -249,7 +248,3 @@ async fn load_plies_batch(
     Ok(out)
 }
 
-/// Resolve engine path from options.
-pub fn resolve_engine_path(options: &AnalyzeOptions) -> Option<String> {
-    options.engine_path.clone().or_else(|| Some("stockfish".to_string()))
-}

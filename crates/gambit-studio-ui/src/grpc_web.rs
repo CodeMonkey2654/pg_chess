@@ -39,7 +39,7 @@ fn parse_trailer_status(trailer: &[u8]) -> Option<String> {
     None
 }
 
-fn decode_frames(data: &[u8]) -> Result<Vec<(u8, Vec<u8>)>, String> {
+fn decode_frames(data: &[u8]) -> Result<(Vec<(u8, Vec<u8>)>, usize), String> {
     let mut frames = Vec::new();
     let mut pos = 0;
     while pos + 5 <= data.len() {
@@ -49,12 +49,13 @@ fn decode_frames(data: &[u8]) -> Result<Vec<(u8, Vec<u8>)>, String> {
             u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
         if pos + len > data.len() {
-            return Err("truncated grpc-web frame".into());
+            pos -= 5;
+            break;
         }
         frames.push((flags, data[pos..pos + len].to_vec()));
         pos += len;
     }
-    Ok(frames)
+    Ok((frames, pos))
 }
 
 async fn fetch_post(path: &str, body: Vec<u8>) -> Result<Response, String> {
@@ -98,7 +99,7 @@ async fn read_response_bytes(resp: &Response) -> Result<Vec<u8>, String> {
 }
 
 fn decode_unary<Resp: Message + Default>(data: &[u8]) -> Result<Resp, String> {
-    let frames = decode_frames(data)?;
+    let (frames, _) = decode_frames(data)?;
     let mut message = None;
     for (flags, payload) in frames {
         if flags & 0x80 != 0 {
@@ -126,7 +127,33 @@ pub async fn unary<Req: Message, Resp: Message + Default>(
     decode_unary(&bytes)
 }
 
-/// Server-streaming grpc-web RPC; invokes `on_item` for each message.
+fn process_frames<Resp: Message + Default, F>(
+    buffer: &mut Vec<u8>,
+    on_item: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(Resp) -> bool,
+{
+    let (frames, consumed) = decode_frames(buffer)?;
+    if consumed > 0 {
+        buffer.drain(0..consumed);
+    }
+    for (flags, payload) in frames {
+        if flags & 0x80 != 0 {
+            if let Some(err) = parse_trailer_status(&payload) {
+                return Err(err);
+            }
+            continue;
+        }
+        let item = Resp::decode(payload.as_slice()).map_err(|e| e.to_string())?;
+        if !on_item(item) {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+/// Server-streaming grpc-web RPC; invokes `on_item` for each message as chunks arrive.
 pub async fn server_streaming<Req: Message, Resp: Message + Default, F>(
     method: &str,
     request: &Req,
@@ -161,28 +188,19 @@ where
             .map_err(|e| format!("{e:?}"))?
             .as_bool()
             .unwrap_or(true);
-        if done {
-            break;
-        }
-        let value = js_sys::Reflect::get(&obj, &"value".into()).map_err(|e| format!("{e:?}"))?;
-        if !value.is_undefined() {
-            let chunk = js_sys::Uint8Array::new(&value).to_vec();
-            buffer.extend_from_slice(&chunk);
-        }
-    }
-
-    let frames = decode_frames(&buffer)?;
-    for (flags, payload) in frames {
-        if flags & 0x80 != 0 {
-            if let Some(err) = parse_trailer_status(&payload) {
-                return Err(err);
+        if !done {
+            let value =
+                js_sys::Reflect::get(&obj, &"value".into()).map_err(|e| format!("{e:?}"))?;
+            if !value.is_undefined() {
+                let chunk = js_sys::Uint8Array::new(&value).to_vec();
+                buffer.extend_from_slice(&chunk);
+                process_frames::<Resp, _>(&mut buffer, &mut on_item)?;
             }
             continue;
         }
-        let item = Resp::decode(payload.as_slice()).map_err(|e| e.to_string())?;
-        if !on_item(item) {
-            break;
-        }
+        break;
     }
+
+    process_frames::<Resp, _>(&mut buffer, &mut on_item)?;
     Ok(())
 }

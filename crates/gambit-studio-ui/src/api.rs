@@ -2,11 +2,11 @@
 
 use crate::grpc_web::{server_streaming, unary};
 use gambit_proto::{
-    BenchResponse, Empty, GameDetail, GamesByPositionRequest, GamesPage, GetActiveJobRequest,
-    GetGameRequest, GetSourceSummaryRequest, HashFromFenRequest,
-    HashFromFenResponse, HealthResponse, JobStarted, JobStatus, ListFilesetsRequest,
-    ListFilesetsResponse, ListSourcesResponse, LoadYearRequest, OpeningStatsRequest,
-    OpeningStatsResponse, OptionalJobStatus,
+    AnalyzeGameRequest, AnalyzeGameResponse, BenchResponse, Empty, GameDetail, GamesByPositionRequest,
+    GamesPage, GetActiveJobRequest, GetGameRequest, GetPositionEvalRequest, GetSourceSummaryRequest,
+    HashFromFenRequest, HashFromFenResponse, HealthResponse, JobStarted, JobStatus,
+    ListFilesetsRequest, ListFilesetsResponse, ListSourcesResponse, LoadYearRequest,
+    OpeningStatsRequest, OpeningStatsResponse, OptionalJobStatus, PositionEvalResponse,
     PositionGamesPage, SearchGamesRequest, SourceDetail, SyncCatalogRequest, SyncCatalogResponse,
     WatchJobRequest,
 };
@@ -80,7 +80,7 @@ pub async fn watch_job(
     job_id: u64,
     source_name: Option<String>,
     year: Option<i32>,
-    mut on_status: impl FnMut(JobStatus) -> bool,
+    on_status: impl FnMut(JobStatus) -> bool,
 ) -> Result<(), String> {
     server_streaming(
         "WatchJob",
@@ -89,7 +89,7 @@ pub async fn watch_job(
             source_name,
             year,
         },
-        |status| on_status(status),
+        on_status,
     )
     .await
 }
@@ -99,6 +99,7 @@ pub async fn fetch_games(
     source_id: Option<i32>,
     offset: i64,
     limit: i64,
+    cursor: Option<&str>,
 ) -> Result<GamesPage, String> {
     unary(
         "SearchGames",
@@ -107,13 +108,22 @@ pub async fn fetch_games(
             source_id,
             offset,
             limit,
+            include_total: Some(false),
+            cursor: cursor.map(str::to_string),
         },
     )
     .await
 }
 
 pub async fn fetch_game(id: i64) -> Result<GameDetail, String> {
-    unary("GetGame", &GetGameRequest { game_id: id }).await
+    unary(
+        "GetGame",
+        &GetGameRequest {
+            game_id: id,
+            max_plies: None,
+        },
+    )
+    .await
 }
 
 pub async fn hash_from_fen(fen: &str) -> Result<i64, String> {
@@ -136,6 +146,7 @@ pub async fn fetch_games_by_position(
     hash: i64,
     offset: i64,
     limit: i64,
+    cursor: Option<&str>,
 ) -> Result<PositionGamesPage, String> {
     unary(
         "GamesByPosition",
@@ -143,6 +154,25 @@ pub async fn fetch_games_by_position(
             hash,
             offset,
             limit,
+            source_id: None,
+            cursor: cursor.map(str::to_string),
+        },
+    )
+    .await
+}
+
+pub async fn fetch_position_eval(
+    fen: &str,
+    hash: i64,
+    depth: u32,
+) -> Result<PositionEvalResponse, String> {
+    unary(
+        "GetPositionEval",
+        &GetPositionEvalRequest {
+            fen: fen.to_string(),
+            hash,
+            depth: depth as i32,
+            profile_id: 1,
         },
     )
     .await
@@ -152,10 +182,10 @@ pub async fn run_bench() -> Result<BenchResponse, String> {
     unary("RunBench", &Empty {}).await
 }
 
-pub async fn analyze_game(game_id: i64, depth: u32) -> Result<gambit_proto::AnalyzeGameResponse, String> {
+pub async fn analyze_game(game_id: i64, depth: u32) -> Result<AnalyzeGameResponse, String> {
     unary(
         "AnalyzeGame",
-        &gambit_proto::AnalyzeGameRequest { game_id, depth },
+        &AnalyzeGameRequest { game_id, depth },
     )
     .await
 }

@@ -12,6 +12,7 @@ mod order;
 mod phase;
 mod report;
 mod search;
+mod see;
 mod tt;
 
 pub use book::{write_book, CorpusBook};
@@ -20,5 +21,7 @@ pub use evaluator::{eval_from_uci, EvalSource, NativeEvaluator, PositionEvaluato
 pub use game::{GameAnalyzer, GamePly};
 pub use limits::SearchLimits;
 pub use phase::{detect_phase, GamePhase, DEFAULT_OPENING_PLY};
-pub use report::{Analysis, GameReviewSummary, MoveStat, MATE_CP, PlyAnalysis, PositionEval, Score};
+pub use report::{
+    Analysis, GameReviewSummary, MoveStat, PlyAnalysis, PositionEval, Score, MATE_CP,
+};
 pub use search::Analyzer;

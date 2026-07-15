@@ -12,29 +12,27 @@ pub mod profile;
 pub mod progress;
 pub mod stream;
 
+pub use analyze::{analyze_batch, analyze_game, AnalyzeGameResult, AnalyzeOptions};
 use anyhow::{Context, Result};
 pub use db::backfill_types;
-pub use analyze::{AnalyzeGameResult, AnalyzeOptions, analyze_batch, analyze_game};
 pub use db::filesets::{self, FilesetRow};
 use db::{
-    build_staging_rows, copy_staging_batch, ensure_source, flush_staging_batch,
-    refresh_opening_stats, run_migrations, truncate_staging, acquire_staging_lock,
-    release_staging_lock,
-};
-pub use lichess::{
-    cache_is_complete, cached_path, prefetch_download, CatalogEntry, MIN_COMPLETE_SHARD_BYTES,
+    acquire_staging_lock, build_staging_rows, copy_staging_batch, ensure_source,
+    flush_staging_batch, refresh_opening_stats, release_staging_lock, run_migrations,
+    truncate_staging,
 };
 pub use lichess::DownloadProgress;
 pub use lichess::IngestProgress;
-pub use progress::format_download_progress;
-use lichess::{
-    download_to_cache_with_retries, fetch_catalog, hash_file, parse_catalog,
+pub use lichess::{
+    cache_is_complete, cached_path, prefetch_download, CatalogEntry, MIN_COMPLETE_SHARD_BYTES,
 };
+use lichess::{download_to_cache_with_retries, fetch_catalog, hash_file, parse_catalog};
 use pipeline::{
     batch_games, parse_chunks_parallel, parse_path_parallel, GameProvenance, IngestStats,
     ParsedGame, RawGameChunk,
 };
 use profile::IngestProfile;
+pub use progress::format_download_progress;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use stream::open_game_reader;
@@ -265,8 +263,7 @@ impl IngestSession {
             }
 
             while pending.len() >= options.batch_games {
-                let batch: Vec<ParsedGame> =
-                    pending.drain(..options.batch_games).collect();
+                let batch: Vec<ParsedGame> = pending.drain(..options.batch_games).collect();
                 let (g, p, pl) = ingest_batch(
                     &mut self.client,
                     source_id,
@@ -422,11 +419,7 @@ impl IngestSession {
             for (i, fileset) in pending.iter().enumerate() {
                 if let Some(next) = pending.get(i + 1) {
                     let cached = cached_path(cache_dir, &next.filename);
-                    if !cache_is_complete(
-                        &cached,
-                        next.byte_size,
-                        next.sha256.as_deref(),
-                    ) {
+                    if !cache_is_complete(&cached, next.byte_size, next.sha256.as_deref()) {
                         prefetch = Some(prefetch_download(
                             &next.remote_url,
                             &next.filename,
@@ -479,14 +472,7 @@ impl IngestSession {
                     let mut session = IngestSession::connect(&pg_uri).await?;
                     session
                         .load_one_fileset(
-                            source_id,
-                            &fileset,
-                            &cache_dir,
-                            &options,
-                            &mut None,
-                            None,
-                            None,
-                            None,
+                            source_id, &fileset, &cache_dir, &options, &mut None, None, None, None,
                         )
                         .await
                 }
@@ -510,7 +496,8 @@ impl IngestSession {
             anyhow::bail!("all {failures} parallel shard loads failed");
         }
 
-        self.finish_year_ingest(source_id, &options, profile).await?;
+        self.finish_year_ingest(source_id, &options, profile)
+            .await?;
         Ok(ok)
     }
 
@@ -529,6 +516,7 @@ impl IngestSession {
     }
 
     /// Load a single fileset row by id.
+    #[allow(clippy::too_many_arguments)]
     pub async fn load_fileset_by_id(
         &mut self,
         fileset_id: i64,
@@ -562,6 +550,7 @@ impl IngestSession {
         Ok(result)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn load_one_fileset(
         &mut self,
         source_id: i32,
@@ -574,54 +563,45 @@ impl IngestSession {
         prefetched_download: Option<lichess::PrefetchHandle>,
     ) -> Result<ImportResult> {
         let cached = cached_path(cache_dir, &fileset.filename);
-        let (path, byte_size, sha256) = if cache_is_complete(
-            &cached,
-            fileset.byte_size,
-            fileset.sha256.as_deref(),
-        ) {
-            if let (Some(size), Some(digest)) = (fileset.byte_size, fileset.sha256.as_ref()) {
-                (cached, size, digest.clone())
-            } else {
-                let (size, digest) = hash_file(&cached).await?;
-                (cached, size, digest)
-            }
-        } else if cached.exists() {
-            tracing::warn!(
-                fileset = fileset.period_label,
-                path = %cached.display(),
-                "removing incomplete cache file"
-            );
-            tokio::fs::remove_file(&cached)
-                .await
-                .with_context(|| format!("remove incomplete {}", cached.display()))?;
-            Self::download_shard(
-                &self.client,
-                fileset,
-                cache_dir,
-                download_progress,
-                prefetched_download,
-            )
-            .await?
-        } else if let Some(handle) = prefetched_download {
-            filesets::mark_download_started(&self.client, fileset.id).await?;
-            match handle.await.context("prefetch download join")? {
-                Ok(v) => v,
-                Err(e) => {
-                    let msg = format_error(&e);
-                    filesets::mark_failed(&self.client, fileset.id, &msg).await?;
-                    return Err(e);
+        let (path, byte_size, sha256) =
+            if cache_is_complete(&cached, fileset.byte_size, fileset.sha256.as_deref()) {
+                if let (Some(size), Some(digest)) = (fileset.byte_size, fileset.sha256.as_ref()) {
+                    (cached, size, digest.clone())
+                } else {
+                    let (size, digest) = hash_file(&cached).await?;
+                    (cached, size, digest)
                 }
-            }
-        } else {
-            Self::download_shard(
-                &self.client,
-                fileset,
-                cache_dir,
-                download_progress,
-                None,
-            )
-            .await?
-        };
+            } else if cached.exists() {
+                tracing::warn!(
+                    fileset = fileset.period_label,
+                    path = %cached.display(),
+                    "removing incomplete cache file"
+                );
+                tokio::fs::remove_file(&cached)
+                    .await
+                    .with_context(|| format!("remove incomplete {}", cached.display()))?;
+                Self::download_shard(
+                    &self.client,
+                    fileset,
+                    cache_dir,
+                    download_progress,
+                    prefetched_download,
+                )
+                .await?
+            } else if let Some(handle) = prefetched_download {
+                filesets::mark_download_started(&self.client, fileset.id).await?;
+                match handle.await.context("prefetch download join")? {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format_error(&e);
+                        filesets::mark_failed(&self.client, fileset.id, &msg).await?;
+                        return Err(e);
+                    }
+                }
+            } else {
+                Self::download_shard(&self.client, fileset, cache_dir, download_progress, None)
+                    .await?
+            };
 
         filesets::mark_download_complete(&self.client, fileset.id, byte_size, &sha256).await?;
         filesets::mark_ingest_started(&self.client, fileset.id).await?;
@@ -791,7 +771,8 @@ async fn ingest_batch(
     profile: &mut Option<IngestProfile>,
 ) -> Result<(usize, u64, u64)> {
     acquire_staging_lock(client).await?;
-    let result = ingest_batch_locked(client, source_id, batch, store_pgn, defer_types, profile).await;
+    let result =
+        ingest_batch_locked(client, source_id, batch, store_pgn, defer_types, profile).await;
     if let Err(e) = release_staging_lock(client).await {
         tracing::warn!(error = %e, "failed to release staging lock");
     }
@@ -833,8 +814,7 @@ async fn ingest_batch_locked(
 
     let pos_refs: Vec<(i32, &gambit_db::PositionRow)> =
         pos_rows.iter().map(|(s, p)| (*s, p)).collect();
-    let ply_refs: Vec<(i32, &gambit_db::PlyRow)> =
-        ply_rows.iter().map(|(s, p)| (*s, p)).collect();
+    let ply_refs: Vec<(i32, &gambit_db::PlyRow)> = ply_rows.iter().map(|(s, p)| (*s, p)).collect();
 
     if let Some(p) = profile {
         p.record("db.truncate_staging", truncate);

@@ -144,12 +144,14 @@ async fn main() -> Result<()> {
             pg_uri,
             game_id,
             depth,
-            engine,
+            corpus_book,
+            syzygy,
         } => {
             let session = IngestSession::connect(&pg_uri).await?;
             let options = gambit_ingest::analyze::AnalyzeOptions {
                 depth,
-                engine_path: engine,
+                corpus_book,
+                syzygy_path: syzygy,
                 ..Default::default()
             };
             let result =
@@ -168,22 +170,20 @@ async fn main() -> Result<()> {
             source,
             limit,
             depth,
-            engine,
+            corpus_book,
+            syzygy,
         } => {
             let session = IngestSession::connect(&pg_uri).await?;
             let source_id = session.ensure_source(&source).await?;
             let options = gambit_ingest::analyze::AnalyzeOptions {
                 depth,
-                engine_path: engine,
+                corpus_book,
+                syzygy_path: syzygy,
                 ..Default::default()
             };
-            let results = gambit_ingest::analyze::analyze_batch(
-                session.client(),
-                source_id,
-                limit,
-                &options,
-            )
-            .await?;
+            let results =
+                gambit_ingest::analyze::analyze_batch(session.client(), source_id, limit, &options)
+                    .await?;
             info!(count = results.len(), source, "batch analysis complete");
             Ok(())
         }

@@ -21,13 +21,8 @@ pub async fn run_load_job(
     session.migrate().await?;
 
     let source_id = session.ensure_source(source).await?;
-    let targets = gambit_ingest::filesets::filesets_for_year(
-        session.client(),
-        source_id,
-        year,
-        true,
-    )
-    .await?;
+    let targets =
+        gambit_ingest::filesets::filesets_for_year(session.client(), source_id, year, true).await?;
 
     jobs.update(|j| j.total_shards = targets.len() as u32);
 
@@ -38,10 +33,7 @@ pub async fn run_load_job(
     let mut total_games = 0u64;
     let mut prefetch = None;
 
-    let pending: Vec<_> = targets
-        .iter()
-        .filter(|f| f.status != "complete")
-        .collect();
+    let pending: Vec<_> = targets.iter().filter(|f| f.status != "complete").collect();
 
     for (i, fileset) in pending.iter().enumerate() {
         if let Some(next) = pending.get(i + 1) {
@@ -55,10 +47,7 @@ pub async fn run_load_job(
             }
         }
 
-        let shard_index = targets
-            .iter()
-            .position(|f| f.id == fileset.id)
-            .unwrap_or(i);
+        let shard_index = targets.iter().position(|f| f.id == fileset.id).unwrap_or(i);
         let label = fileset.period_label.clone();
         jobs.update(|j| {
             j.current_shard = (shard_index + 1) as u32;

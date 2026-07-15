@@ -7,6 +7,7 @@ mod brand;
 mod format;
 mod grpc_web;
 mod job_poll;
+mod pages;
 mod replay;
 
 use app::App;
