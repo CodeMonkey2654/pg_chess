@@ -31,3 +31,7 @@ harness = false
 [[test]]
 name = "puzzles"
 path = "tests/puzzles.rs"
+
+[[test]]
+name = "classify"
+path = "tests/classify.rs"

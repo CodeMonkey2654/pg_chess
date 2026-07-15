@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package gambit.v1;
+
+import "gambit/v1/common.proto";
+
+service IngestService {
+  rpc SyncCatalog(SyncCatalogRequest) returns (SyncCatalogResponse);
+  rpc LoadYear(LoadYearRequest) returns (JobStarted);
+  rpc LoadFileset(LoadFilesetRequest) returns (LoadFilesetResponse);
+  rpc GetJob(GetJobRequest) returns (JobStatus);
+  rpc GetActiveJob(GetActiveJobRequest) returns (OptionalJobStatus);
+  rpc WatchJob(WatchJobRequest) returns (stream JobStatus);
+}

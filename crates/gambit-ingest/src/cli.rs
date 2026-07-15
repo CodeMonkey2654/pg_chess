@@ -74,9 +74,9 @@ pub enum Command {
     },
     /// Sync Lichess catalog entries for a year into gambit.filesets.
     SyncCatalog {
-        /// PostgreSQL connection URI.
-        #[arg(long, env = "DATABASE_URL")]
-        pg_uri: String,
+        /// Ingest worker gRPC address.
+        #[arg(long, env = "INGEST_ADDR", default_value = "http://127.0.0.1:8082")]
+        ingest_addr: String,
         /// Source name (e.g. lichess_standard_2024).
         #[arg(long)]
         source: String,
@@ -86,9 +86,9 @@ pub enum Command {
     },
     /// Download and ingest a Lichess fileset.
     LoadFileset {
-        /// PostgreSQL connection URI.
-        #[arg(long, env = "DATABASE_URL")]
-        pg_uri: String,
+        /// Ingest worker gRPC address.
+        #[arg(long, env = "INGEST_ADDR", default_value = "http://127.0.0.1:8082")]
+        ingest_addr: String,
         /// Source name shared by all shards.
         #[arg(long)]
         source: String,
@@ -110,6 +110,39 @@ pub enum Command {
         /// Load only one fileset id (retry a failed shard).
         #[arg(long)]
         fileset_id: Option<i64>,
+    },
+    /// Analyze a single game (engine eval + move classification).
+    AnalyzeGame {
+        /// PostgreSQL connection URI.
+        #[arg(long, env = "DATABASE_URL")]
+        pg_uri: String,
+        /// Game id to analyze.
+        #[arg(long)]
+        game_id: i64,
+        /// Search depth in plies.
+        #[arg(long, default_value_t = 12)]
+        depth: u32,
+        /// Stockfish executable path (default: stockfish or GAMBIT_STOCKFISH_PATH).
+        #[arg(long, env = "GAMBIT_STOCKFISH_PATH")]
+        engine: Option<String>,
+    },
+    /// Analyze a batch of unanalyzed games for a source.
+    AnalyzeBatch {
+        /// PostgreSQL connection URI.
+        #[arg(long, env = "DATABASE_URL")]
+        pg_uri: String,
+        /// Source name.
+        #[arg(long)]
+        source: String,
+        /// Max games to analyze.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Search depth in plies.
+        #[arg(long, default_value_t = 12)]
+        depth: u32,
+        /// Stockfish executable path.
+        #[arg(long, env = "GAMBIT_STOCKFISH_PATH")]
+        engine: Option<String>,
     },
 }
 

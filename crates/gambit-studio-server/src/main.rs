@@ -1,10 +1,13 @@
-//! Gambit Studio REST API server.
+//! Gambit Studio gRPC API server.
 
-use axum::Router;
-use gambit_studio_server::{router, AppState, PgPool};
+use gambit_proto::ingest_service_client::IngestServiceClient;
+use gambit_proto::studio_service_server::StudioServiceServer;
+use gambit_studio_server::{PgPool, StudioServer};
 use std::env;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use tonic::transport::{Channel, Server};
+use tonic_web::GrpcWebLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 #[tokio::main]
@@ -22,19 +25,29 @@ async fn main() -> anyhow::Result<()> {
             env::var("USERNAME").unwrap_or_else(|_| "postgres".into())
         )
     });
-    let cache_dir = env::var("GAMBIT_CACHE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(".cache/lichess"));
+    let ingest_addr = env::var("INGEST_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8082".into());
     let addr: SocketAddr = env::var("STUDIO_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8080".into())
         .parse()?;
 
     let pool = PgPool::new(&pg_uri)?;
-    let state = AppState::new(pool, pg_uri.clone(), cache_dir);
-    let app: Router = router(state);
+    let ingest_channel = Channel::from_shared(ingest_addr)?.connect().await?;
+    let ingest_client = IngestServiceClient::new(ingest_channel);
+    let studio = StudioServer::new(pool, ingest_client);
+    let service = StudioServiceServer::new(studio);
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     info!(%addr, %pg_uri, "gambit-studio-server listening");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    Server::builder()
+        .accept_http1(true)
+        .layer(cors)
+        .layer(GrpcWebLayer::new())
+        .add_service(service)
+        .serve(addr)
+        .await?;
     Ok(())
 }

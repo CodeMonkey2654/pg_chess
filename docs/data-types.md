@@ -18,6 +18,15 @@ The core Rust model uses a small set of chess-specific types that map cleanly to
 - `chess_position`: serialized as FEN text
 - `chess_move`: serialized as UCI text
 - `chess_game`: serialized as a simple text form of `FEN | move1 move2 ...`
+- `chess_move_class`: move quality enum (`best`, `good`, `inaccuracy`, `mistake`, `blunder`)
+- `chess_eval_source`: evaluation backend enum (`stockfish`, `syzygy`, `corpus`, `native`)
+- `chess_analysis_status`: game analysis job status enum
+
+## Analysis functions (pg_chess extension)
+
+- `chess_classify_cp_loss(cp_loss int) → chess_move_class label`
+- `chess_accuracy_from_classes(classes text[]) → real`
+- `chess_eval_to_cp(cp int, mate_plies int) → int`
 
 ## Notes
 

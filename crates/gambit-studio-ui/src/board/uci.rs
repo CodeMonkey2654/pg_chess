@@ -20,7 +20,11 @@ pub fn parse_uci(uci: &str) -> Option<UciMove> {
     } else {
         None
     };
-    Some(UciMove { from, to, promotion })
+    Some(UciMove {
+        from,
+        to,
+        promotion,
+    })
 }
 
 /// If the move is castling, return the rook from/to squares.
@@ -45,7 +49,12 @@ pub fn promotion_options(legal_moves: &[String], from: &str, to: &str) -> Vec<ch
 }
 
 /// Find the matching legal UCI move, defaulting promotion to queen.
-pub fn matching_uci(legal_moves: &[String], from: &str, to: &str, promotion: Option<char>) -> Option<String> {
+pub fn matching_uci(
+    legal_moves: &[String],
+    from: &str,
+    to: &str,
+    promotion: Option<char>,
+) -> Option<String> {
     let base = format!("{from}{to}");
     if let Some(p) = promotion {
         let full = format!("{base}{p}");
@@ -61,8 +70,5 @@ pub fn matching_uci(legal_moves: &[String], from: &str, to: &str, promotion: Opt
     if matches.len() == 1 {
         return Some(matches[0].clone());
     }
-    matches
-        .iter()
-        .find(|m| m.len() == 4)
-        .map(|m| (*m).clone())
+    matches.iter().find(|m| m.len() == 4).map(|m| (*m).clone())
 }

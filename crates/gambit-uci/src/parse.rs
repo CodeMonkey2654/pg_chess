@@ -3,6 +3,15 @@
 use gambit_db::{Move, MoveParseError};
 use thiserror::Error;
 
+/// Result of a UCI `go` search with the final `info` line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchWithInfo {
+    /// Engine's chosen move.
+    pub result: SearchResult,
+    /// Last parsed `info` line before `bestmove`.
+    pub info: Info,
+}
+
 /// Result of a UCI `go` search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {

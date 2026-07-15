@@ -1,30 +1,41 @@
 //! High-throughput PGN bulk loader library for the gambit PostgreSQL schema.
 
+pub mod analyze;
 pub mod book;
 pub mod cli;
 pub mod db;
+pub mod grpc;
 pub mod headers;
 pub mod lichess;
 pub mod pipeline;
 pub mod profile;
+pub mod progress;
 pub mod stream;
 
 use anyhow::{Context, Result};
+pub use db::backfill_types;
+pub use analyze::{AnalyzeGameResult, AnalyzeOptions, analyze_batch, analyze_game};
+pub use db::filesets::{self, FilesetRow};
 use db::{
     build_staging_rows, copy_staging_batch, ensure_source, flush_staging_batch,
-    refresh_opening_stats, run_migrations, truncate_staging,
+    refresh_opening_stats, run_migrations, truncate_staging, acquire_staging_lock,
+    release_staging_lock,
 };
-pub use db::backfill_types;
-pub use db::filesets::{self, FilesetRow};
-pub use lichess::CatalogEntry;
+pub use lichess::{
+    cache_is_complete, cached_path, prefetch_download, CatalogEntry, MIN_COMPLETE_SHARD_BYTES,
+};
 pub use lichess::DownloadProgress;
 pub use lichess::IngestProgress;
-use lichess::{cached_path, download_to_cache, fetch_catalog, hash_file, parse_catalog};
+pub use progress::format_download_progress;
+use lichess::{
+    download_to_cache_with_retries, fetch_catalog, hash_file, parse_catalog,
+};
 use pipeline::{
-    batch_games, parse_path_parallel, GameProvenance, IngestStats, ParsedGame,
+    batch_games, parse_chunks_parallel, parse_path_parallel, GameProvenance, IngestStats,
+    ParsedGame, RawGameChunk,
 };
 use profile::IngestProfile;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use stream::open_game_reader;
 use tokio_postgres::Client;
@@ -54,6 +65,8 @@ pub struct ImportOptions {
     pub workers: usize,
     /// Games per COPY batch.
     pub batch_games: usize,
+    /// Concurrent shard loads (separate DB connections per shard).
+    pub shard_concurrency: usize,
     /// Store full PGN text on each game row.
     pub store_pgn: bool,
     /// Stop on first parse error.
@@ -66,11 +79,13 @@ pub struct ImportOptions {
 
 impl Default for ImportOptions {
     fn default() -> Self {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
         Self {
-            workers: std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4),
+            workers: cpus,
             batch_games: 5000,
+            shard_concurrency: 1,
             store_pgn: false,
             fail_fast: false,
             eager_types: false,
@@ -82,6 +97,7 @@ impl Default for ImportOptions {
 /// Connected ingest session bound to one PostgreSQL database.
 pub struct IngestSession {
     client: Client,
+    pg_uri: String,
 }
 
 impl IngestSession {
@@ -89,6 +105,7 @@ impl IngestSession {
     pub async fn connect(pg_uri: &str) -> Result<Self> {
         Ok(Self {
             client: connect_client(pg_uri).await?,
+            pg_uri: pg_uri.to_string(),
         })
     }
 
@@ -203,6 +220,7 @@ impl IngestSession {
         let parse_start = Instant::now();
         let mut reader = open_game_reader(file)?;
         let mut pending: Vec<ParsedGame> = Vec::new();
+        let mut raw_batch: Vec<RawGameChunk> = Vec::new();
         let mut games_ok = 0u64;
         let mut games_err = 0u64;
         let mut positions = 0u64;
@@ -213,32 +231,42 @@ impl IngestSession {
         let mut total_positions = 0u64;
         let mut total_plies = 0u64;
 
+        let parse_batch_size = options.workers.saturating_mul(64).max(128);
+        let provenance_base = GameProvenance {
+            pgn_sha256: options.shard_sha256.clone(),
+            pgn_byte_offset: None,
+        };
+
         while let Some((chunk, offset)) = reader.next_game()? {
-            match parse_one_with_provenance(
-                &chunk,
-                options.store_pgn,
-                GameProvenance {
-                    pgn_sha256: options.shard_sha256.clone(),
-                    pgn_byte_offset: Some(offset),
-                },
-            ) {
-                Ok(game) => {
-                    games_ok += 1;
-                    positions += game.exploded.positions.len() as u64;
-                    plies += game.exploded.plies.len() as u64;
-                    pending.push(game);
-                }
-                Err(e) => {
-                    games_err += 1;
-                    eprintln!("skip game: {e}");
-                    if options.fail_fast {
-                        return Err(e.into());
-                    }
-                }
+            raw_batch.push(RawGameChunk {
+                text: chunk,
+                byte_offset: offset,
+            });
+
+            if raw_batch.len() < parse_batch_size {
+                continue;
             }
 
-            if pending.len() >= options.batch_games {
-                let batch = std::mem::take(&mut pending);
+            let (parsed, err_count) = parse_chunks_parallel(
+                &raw_batch,
+                options.workers,
+                options.store_pgn,
+                &provenance_base,
+                options.fail_fast,
+                profile,
+            )?;
+            raw_batch.clear();
+            games_err += err_count as u64;
+            for game in parsed {
+                games_ok += 1;
+                positions += game.exploded.positions.len() as u64;
+                plies += game.exploded.plies.len() as u64;
+                pending.push(game);
+            }
+
+            while pending.len() >= options.batch_games {
+                let batch: Vec<ParsedGame> =
+                    pending.drain(..options.batch_games).collect();
                 let (g, p, pl) = ingest_batch(
                     &mut self.client,
                     source_id,
@@ -257,11 +285,31 @@ impl IngestSession {
             }
         }
 
-        if !pending.is_empty() {
+        if !raw_batch.is_empty() {
+            let (parsed, err_count) = parse_chunks_parallel(
+                &raw_batch,
+                options.workers,
+                options.store_pgn,
+                &provenance_base,
+                options.fail_fast,
+                profile,
+            )?;
+            games_err += err_count as u64;
+            for game in parsed {
+                games_ok += 1;
+                positions += game.exploded.positions.len() as u64;
+                plies += game.exploded.plies.len() as u64;
+                pending.push(game);
+            }
+        }
+
+        while !pending.is_empty() {
+            let take = options.batch_games.min(pending.len());
+            let batch: Vec<ParsedGame> = pending.drain(..take).collect();
             let (g, p, pl) = ingest_batch(
                 &mut self.client,
                 source_id,
-                &pending,
+                &batch,
                 options.store_pgn,
                 defer_types,
                 profile,
@@ -319,12 +367,7 @@ impl IngestSession {
     }
 
     /// Sync catalog from provided text (for tests).
-    pub async fn sync_catalog_text(
-        &self,
-        source: &str,
-        text: &str,
-        year: i32,
-    ) -> Result<Vec<i64>> {
+    pub async fn sync_catalog_text(&self, source: &str, text: &str, year: i32) -> Result<Vec<i64>> {
         let source_id = self.ensure_source(source).await?;
         let entries = parse_catalog(text, Some(year));
         let mut ids = Vec::with_capacity(entries.len());
@@ -350,32 +393,139 @@ impl IngestSession {
         cache_dir: &Path,
         options: &ImportOptions,
         profile: &mut Option<IngestProfile>,
+        skip_complete: bool,
     ) -> Result<Vec<ImportResult>> {
         let source_id = self.ensure_source(source).await?;
-        let filesets = filesets::list_filesets(&self.client, source_id).await?;
-        let year_prefix = format!("{year}-");
-        let targets: Vec<_> = filesets
-            .into_iter()
-            .filter(|f| f.period_label.starts_with(&year_prefix))
-            .collect();
+        let targets =
+            filesets::filesets_for_year(&self.client, source_id, year, skip_complete).await?;
 
         if targets.is_empty() {
-            anyhow::bail!("no filesets found for source {source} year {year}; run sync-catalog first");
+            anyhow::bail!(
+                "no filesets found for source {source} year {year}; run sync-catalog first"
+            );
         }
 
-        let mut results = Vec::with_capacity(targets.len());
-        for fileset in targets {
-            let result = self
-                .load_one_fileset(source_id, &fileset, cache_dir, options, profile, None, None)
-                .await?;
-            results.push(result);
+        let pending: Vec<filesets::FilesetRow> = targets
+            .into_iter()
+            .filter(|f| !(skip_complete && f.status == "complete"))
+            .collect();
+
+        if pending.is_empty() {
+            return Ok(Vec::new());
         }
 
+        let concurrency = options.shard_concurrency.max(1);
+        if concurrency == 1 {
+            let mut results = Vec::new();
+            let mut failures = 0usize;
+            let mut prefetch = None;
+            for (i, fileset) in pending.iter().enumerate() {
+                if let Some(next) = pending.get(i + 1) {
+                    let cached = cached_path(cache_dir, &next.filename);
+                    if !cache_is_complete(
+                        &cached,
+                        next.byte_size,
+                        next.sha256.as_deref(),
+                    ) {
+                        prefetch = Some(prefetch_download(
+                            &next.remote_url,
+                            &next.filename,
+                            cache_dir,
+                        ));
+                    }
+                }
+                match self
+                    .load_one_fileset(
+                        source_id,
+                        fileset,
+                        cache_dir,
+                        options,
+                        profile,
+                        None,
+                        None,
+                        prefetch.take(),
+                    )
+                    .await
+                {
+                    Ok(result) => results.push(result),
+                    Err(e) => {
+                        failures += 1;
+                        tracing::error!(
+                            fileset = fileset.period_label,
+                            error = %e,
+                            "shard load failed (continuing)"
+                        );
+                    }
+                }
+            }
+            if results.is_empty() && failures > 0 {
+                anyhow::bail!("all {failures} shard loads failed");
+            }
+            self.finish_year_ingest(source_id, options, profile).await?;
+            return Ok(results);
+        }
+
+        use futures::stream::{self, StreamExt};
+        let pg_uri = self.pg_uri.clone();
+        let options = options.clone();
+        let cache_dir = cache_dir.to_path_buf();
+
+        let results: Vec<Result<ImportResult>> = stream::iter(pending)
+            .map(|fileset| {
+                let pg_uri = pg_uri.clone();
+                let options = options.clone();
+                let cache_dir = cache_dir.clone();
+                async move {
+                    let mut session = IngestSession::connect(&pg_uri).await?;
+                    session
+                        .load_one_fileset(
+                            source_id,
+                            &fileset,
+                            &cache_dir,
+                            &options,
+                            &mut None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        let mut ok = Vec::new();
+        let mut failures = 0usize;
+        for result in results {
+            match result {
+                Ok(r) => ok.push(r),
+                Err(e) => {
+                    failures += 1;
+                    tracing::error!(error = %e, "parallel shard load failed");
+                }
+            }
+        }
+        if ok.is_empty() && failures > 0 {
+            anyhow::bail!("all {failures} parallel shard loads failed");
+        }
+
+        self.finish_year_ingest(source_id, &options, profile).await?;
+        Ok(ok)
+    }
+
+    /// Backfill deferred types and refresh opening stats after a year load.
+    pub async fn finish_year_ingest(
+        &mut self,
+        source_id: i32,
+        options: &ImportOptions,
+        profile: &mut Option<IngestProfile>,
+    ) -> Result<()> {
         if !options.eager_types {
             backfill_types(&self.client, source_id, profile).await?;
         }
         refresh_opening_stats(&self.client).await?;
-        Ok(results)
+        Ok(())
     }
 
     /// Load a single fileset row by id.
@@ -388,6 +538,7 @@ impl IngestSession {
         run_backfill: bool,
         download_progress: Option<DownloadProgress>,
         ingest_progress: Option<IngestProgress>,
+        prefetched_download: Option<lichess::PrefetchHandle>,
     ) -> Result<ImportResult> {
         let fileset = filesets::get_fileset(&self.client, fileset_id)
             .await?
@@ -402,6 +553,7 @@ impl IngestSession {
                 profile,
                 download_progress,
                 ingest_progress,
+                prefetched_download,
             )
             .await?;
         if run_backfill && !options.eager_types {
@@ -419,27 +571,56 @@ impl IngestSession {
         profile: &mut Option<IngestProfile>,
         download_progress: Option<DownloadProgress>,
         ingest_progress: Option<IngestProgress>,
+        prefetched_download: Option<lichess::PrefetchHandle>,
     ) -> Result<ImportResult> {
         let cached = cached_path(cache_dir, &fileset.filename);
-        let (path, byte_size, sha256) = if cached.exists() {
-            let (size, digest) = hash_file(&cached).await?;
-            (cached, size, digest)
-        } else {
-            filesets::mark_download_started(&self.client, fileset.id).await?;
-            match download_to_cache(
-                &fileset.remote_url,
-                &fileset.filename,
+        let (path, byte_size, sha256) = if cache_is_complete(
+            &cached,
+            fileset.byte_size,
+            fileset.sha256.as_deref(),
+        ) {
+            if let (Some(size), Some(digest)) = (fileset.byte_size, fileset.sha256.as_ref()) {
+                (cached, size, digest.clone())
+            } else {
+                let (size, digest) = hash_file(&cached).await?;
+                (cached, size, digest)
+            }
+        } else if cached.exists() {
+            tracing::warn!(
+                fileset = fileset.period_label,
+                path = %cached.display(),
+                "removing incomplete cache file"
+            );
+            tokio::fs::remove_file(&cached)
+                .await
+                .with_context(|| format!("remove incomplete {}", cached.display()))?;
+            Self::download_shard(
+                &self.client,
+                fileset,
                 cache_dir,
                 download_progress,
+                prefetched_download,
             )
-            .await
-            {
+            .await?
+        } else if let Some(handle) = prefetched_download {
+            filesets::mark_download_started(&self.client, fileset.id).await?;
+            match handle.await.context("prefetch download join")? {
                 Ok(v) => v,
                 Err(e) => {
-                    filesets::mark_failed(&self.client, fileset.id, &e.to_string()).await?;
+                    let msg = format_error(&e);
+                    filesets::mark_failed(&self.client, fileset.id, &msg).await?;
                     return Err(e);
                 }
             }
+        } else {
+            Self::download_shard(
+                &self.client,
+                fileset,
+                cache_dir,
+                download_progress,
+                None,
+            )
+            .await?
         };
 
         filesets::mark_download_complete(&self.client, fileset.id, byte_size, &sha256).await?;
@@ -451,18 +632,13 @@ impl IngestSession {
 
         let started = Instant::now();
         let result = match self
-            .import_shard_stream(
-                source_id,
-                &path,
-                &shard_opts,
-                profile,
-                ingest_progress,
-            )
+            .import_shard_stream(source_id, &path, &shard_opts, profile, ingest_progress)
             .await
         {
             Ok(r) => r,
             Err(e) => {
-                filesets::mark_failed(&self.client, fileset.id, &e.to_string()).await?;
+                let msg = format_error(&e);
+                filesets::mark_failed(&self.client, fileset.id, &msg).await?;
                 return Err(e);
             }
         };
@@ -496,6 +672,35 @@ impl IngestSession {
             "shard ingest complete"
         );
         Ok(result)
+    }
+
+    async fn download_shard(
+        client: &Client,
+        fileset: &filesets::FilesetRow,
+        cache_dir: &Path,
+        download_progress: Option<DownloadProgress>,
+        prefetched_download: Option<lichess::PrefetchHandle>,
+    ) -> Result<(PathBuf, i64, Vec<u8>)> {
+        if let Some(handle) = prefetched_download {
+            filesets::mark_download_started(client, fileset.id).await?;
+            return handle.await.context("prefetch download join")?;
+        }
+        filesets::mark_download_started(client, fileset.id).await?;
+        match download_to_cache_with_retries(
+            &fileset.remote_url,
+            &fileset.filename,
+            cache_dir,
+            download_progress,
+        )
+        .await
+        {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let msg = format_error(&e);
+                filesets::mark_failed(client, fileset.id, &msg).await?;
+                Err(e)
+            }
+        }
     }
 }
 
@@ -585,6 +790,22 @@ async fn ingest_batch(
     defer_types: bool,
     profile: &mut Option<IngestProfile>,
 ) -> Result<(usize, u64, u64)> {
+    acquire_staging_lock(client).await?;
+    let result = ingest_batch_locked(client, source_id, batch, store_pgn, defer_types, profile).await;
+    if let Err(e) = release_staging_lock(client).await {
+        tracing::warn!(error = %e, "failed to release staging lock");
+    }
+    result
+}
+
+async fn ingest_batch_locked(
+    client: &mut Client,
+    source_id: i32,
+    batch: &[ParsedGame],
+    store_pgn: bool,
+    defer_types: bool,
+    profile: &mut Option<IngestProfile>,
+) -> Result<(usize, u64, u64)> {
     let trunc_start = Instant::now();
     truncate_staging(client).await?;
     let truncate = trunc_start.elapsed();
@@ -612,7 +833,8 @@ async fn ingest_batch(
 
     let pos_refs: Vec<(i32, &gambit_db::PositionRow)> =
         pos_rows.iter().map(|(s, p)| (*s, p)).collect();
-    let ply_refs: Vec<(i32, &gambit_db::PlyRow)> = ply_rows.iter().map(|(s, p)| (*s, p)).collect();
+    let ply_refs: Vec<(i32, &gambit_db::PlyRow)> =
+        ply_rows.iter().map(|(s, p)| (*s, p)).collect();
 
     if let Some(p) = profile {
         p.record("db.truncate_staging", truncate);
@@ -623,21 +845,19 @@ async fn ingest_batch(
     flush_staging_batch(client, source_id, defer_types, profile).await
 }
 
-fn parse_one_with_provenance(
-    chunk: &str,
-    store_pgn: bool,
-    provenance: GameProvenance,
-) -> Result<ParsedGame, gambit_db::PgnError> {
-    let pgn = gambit_db::parse_pgn(chunk)?;
-    let exploded = gambit_db::explode_mainline(&pgn)?;
-    Ok(ParsedGame {
-        pgn_text: if store_pgn {
-            chunk.to_string()
-        } else {
-            String::new()
-        },
-        exploded,
-        provenance,
-    })
+/// Format an error with its full cause chain for persistence in `filesets.error_message`.
+pub fn format_error(err: &anyhow::Error) -> String {
+    let mut msg = err.to_string();
+    let mut src = err.source();
+    while let Some(e) = src {
+        msg.push_str(": ");
+        msg.push_str(&e.to_string());
+        src = e.source();
+    }
+    const MAX: usize = 2000;
+    if msg.len() > MAX {
+        msg.truncate(MAX - 3);
+        msg.push_str("...");
+    }
+    msg
 }
-

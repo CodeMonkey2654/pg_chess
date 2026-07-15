@@ -3,8 +3,9 @@
 use anyhow::Result;
 use clap::Parser;
 use gambit_ingest::{
+    book,
     cli::{Cli, Command},
-    book, pipeline, profile, ImportOptions, IngestSession,
+    pipeline, profile, ImportOptions, IngestSession,
 };
 use tracing::info;
 
@@ -52,6 +53,7 @@ async fn main() -> Result<()> {
                 fail_fast,
                 eager_types,
                 shard_sha256: None,
+                ..ImportOptions::default()
             };
             let result = session
                 .import_file(source_id, &file, &options, &mut prof)
@@ -99,18 +101,17 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::SyncCatalog {
-            pg_uri,
+            ingest_addr,
             source,
             year,
         } => {
-            let session = IngestSession::connect(&pg_uri).await?;
-            session.migrate().await?;
-            let ids = session.sync_lichess_catalog(&source, year).await?;
-            info!(count = ids.len(), source, year, "catalog synced");
+            let mut client = gambit_ingest::grpc::connect(&ingest_addr).await?;
+            let count = gambit_ingest::grpc::sync_catalog(&mut client, &source, year).await?;
+            info!(count, source, year, "catalog synced via ingest worker");
             Ok(())
         }
         Command::LoadFileset {
-            pg_uri,
+            ingest_addr,
             source,
             year,
             cache_dir,
@@ -119,39 +120,71 @@ async fn main() -> Result<()> {
             profile,
             fileset_id,
         } => {
-            let mut session = IngestSession::connect(&pg_uri).await?;
-            session.migrate().await?;
-            let mut prof = if profile {
-                Some(profile::IngestProfile::default())
-            } else {
-                None
-            };
-            let options = ImportOptions {
+            if profile {
+                eprintln!("note: --profile is not supported via gRPC load; use direct import for profiling");
+            }
+            let mut client = gambit_ingest::grpc::connect(&ingest_addr).await?;
+            let (shards, total_games) = gambit_ingest::grpc::load_fileset(
+                &mut client,
+                &source,
+                year,
+                &cache_dir,
                 workers,
                 batch_games,
-                store_pgn: false,
-                fail_fast: false,
-                eager_types: false,
-                shard_sha256: None,
+                fileset_id,
+            )
+            .await?;
+            info!(
+                shards,
+                total_games, source, year, "fileset load complete via ingest worker"
+            );
+            Ok(())
+        }
+        Command::AnalyzeGame {
+            pg_uri,
+            game_id,
+            depth,
+            engine,
+        } => {
+            let session = IngestSession::connect(&pg_uri).await?;
+            let options = gambit_ingest::analyze::AnalyzeOptions {
+                depth,
+                engine_path: engine,
+                ..Default::default()
             };
-
-            if let Some(id) = fileset_id {
-                let result = session
-                    .load_fileset_by_id(id, &cache_dir, &options, &mut prof, true, None, None)
-                    .await?;
-                gambit_ingest::print_summary(&result);
-            } else {
-                session.sync_lichess_catalog(&source, year).await?;
-                let results = session
-                    .load_fileset_year(&source, year, &cache_dir, &options, &mut prof)
-                    .await?;
-                let total_games: usize = results.iter().map(|r| r.games_loaded).sum();
-                info!(shards = results.len(), total_games, "fileset load complete");
-                for (i, result) in results.iter().enumerate() {
-                    println!("\n--- Shard {} ---", i + 1);
-                    gambit_ingest::print_summary(result);
-                }
-            }
+            let result =
+                gambit_ingest::analyze::analyze_game(session.client(), game_id, &options).await?;
+            info!(
+                game_id = result.game_id,
+                plies = result.summary.plies.len(),
+                white_acc = ?result.summary.accuracy_white,
+                black_acc = ?result.summary.accuracy_black,
+                "game analyzed"
+            );
+            Ok(())
+        }
+        Command::AnalyzeBatch {
+            pg_uri,
+            source,
+            limit,
+            depth,
+            engine,
+        } => {
+            let session = IngestSession::connect(&pg_uri).await?;
+            let source_id = session.ensure_source(&source).await?;
+            let options = gambit_ingest::analyze::AnalyzeOptions {
+                depth,
+                engine_path: engine,
+                ..Default::default()
+            };
+            let results = gambit_ingest::analyze::analyze_batch(
+                session.client(),
+                source_id,
+                limit,
+                &options,
+            )
+            .await?;
+            info!(count = results.len(), source, "batch analysis complete");
             Ok(())
         }
     }

@@ -746,6 +746,59 @@
             background: rgba(34, 211, 238, 0.08);
             border-left: 2px solid var(--accent-cyan);
         }
+        .movetext li.move-best { border-left: 3px solid #4ade80; }
+        .movetext li.move-good { border-left: 3px solid #86efac; }
+        .movetext li.move-inaccuracy { border-left: 3px solid #facc15; }
+        .movetext li.move-mistake { border-left: 3px solid #fb923c; }
+        .movetext li.move-blunder { border-left: 3px solid #f87171; }
+        .movetext .move-tag {
+            margin-left: auto;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+        }
+        .movetext .move-loss {
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-left: 0.35rem;
+        }
+        .eval-bar {
+            position: relative;
+            width: 100%;
+            max-width: 520px;
+            height: 22px;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #1a1a1a;
+            margin-top: 0.5rem;
+        }
+        .eval-bar-black {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background: linear-gradient(90deg, #111 0%, #333 100%);
+            transition: width 0.2s ease;
+        }
+        .eval-label {
+            position: relative;
+            z-index: 1;
+            display: block;
+            text-align: center;
+            line-height: 22px;
+            font-size: 0.78rem;
+            color: #f5f5f5;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+        }
+        .analysis-summary {
+            margin: 0.5rem 0 0.75rem;
+            padding: 0.65rem 0.75rem;
+            background: var(--surface-hover);
+            border-radius: 8px;
+        }
+        .acc-white { color: #f8fafc; }
+        .acc-black { color: #94a3b8; }
 
         /* ── Chess board ── */
         .board-wrap {

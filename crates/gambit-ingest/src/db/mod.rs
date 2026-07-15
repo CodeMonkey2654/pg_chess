@@ -2,8 +2,10 @@
 
 mod copy;
 pub mod filesets;
+mod staging_lock;
 
 pub use copy::{build_staging_rows, copy_staging_batch};
+pub use staging_lock::{acquire_staging_lock, release_staging_lock};
 pub use filesets::{
     get_fileset, list_filesets, mark_download_complete, mark_download_started, mark_failed,
     mark_ingest_complete, mark_ingest_started, record_ingest_run, upsert_fileset, FilesetRow,
@@ -111,7 +113,7 @@ pub async fn flush_staging_batch(
             &[&source_id],
         )
         .await
-        .context("insert games from staging")?;
+        .map_err(|e| anyhow::anyhow!("insert games from staging: {e}"))?;
 
     let game_count = rows.len();
     let insert_games = games_start.elapsed();
@@ -131,7 +133,7 @@ pub async fn flush_staging_batch(
     let pos = tx
         .execute(pos_sql, &[&source_id])
         .await
-        .context("insert positions from staging")?;
+        .map_err(|e| anyhow::anyhow!("insert positions from staging: {e}"))?;
     let insert_positions = pos_start.elapsed();
 
     let pl_start = Instant::now();
@@ -149,7 +151,7 @@ pub async fn flush_staging_batch(
     let pl = tx
         .execute(pl_sql, &[&source_id])
         .await
-        .context("insert plies from staging")?;
+        .map_err(|e| anyhow::anyhow!("insert plies from staging: {e}"))?;
     let insert_plies = pl_start.elapsed();
 
     let commit_start = Instant::now();

@@ -125,10 +125,14 @@ pub fn open_game_reader(path: &Path) -> Result<SendPgnReader> {
         let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
         let decoder = zstd::stream::read::Decoder::new(file)
             .with_context(|| format!("zstd decode {}", path.display()))?;
-        Ok(SendPgnReader::Zstd(PgnGameReader::new(BufReader::new(decoder))))
+        Ok(SendPgnReader::Zstd(PgnGameReader::new(BufReader::new(
+            decoder,
+        ))))
     } else {
         let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        Ok(SendPgnReader::Plain(PgnGameReader::new(BufReader::new(file))))
+        Ok(SendPgnReader::Plain(PgnGameReader::new(BufReader::new(
+            file,
+        ))))
     }
 }
 

@@ -38,8 +38,28 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: gambit-studio-server check
-        run: cargo check -p gambit-studio-server
+      - name: Install cargo-pgrx
+        run: cargo install --locked cargo-pgrx
+      - name: Initialize pgrx
+        run: cargo pgrx init --pg18 download
+      - name: Install pg_chess extension
+        run: |
+          cargo pgrx install -p pg_chess --pg-config ~/.pgrx/18.*/bin/pg_config --release
+          cargo pgrx start pg18
+          psql "$(cargo pgrx info pg18 | grep 'Connection URL' | awk '{print $NF}')" -c 'CREATE EXTENSION IF NOT EXISTS pg_chess;'
+      - name: gambit-studio-server tests
+        env:
+          DATABASE_URL: postgres://postgres@127.0.0.1:28818/postgres
+          INGEST_ADDR: http://127.0.0.1:8082
+          STUDIO_TEST_ADDR: http://127.0.0.1:18080
+        run: |
+          cargo run -p gambit-ingest -- migrate --pg-uri "$DATABASE_URL"
+          cargo run -p gambit-ingest-worker &
+          sleep 2
+          cargo test -p gambit-studio-server
+          cargo test -p gambit-ingest
+          cargo build -p gambit-ingest-worker
+          cargo build -p gambit-proto
       - name: gambit-studio-ui wasm check
         run: cargo check -p gambit-studio-ui --target wasm32-unknown-unknown
       - name: gambit-db-wasm check

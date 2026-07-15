@@ -58,6 +58,17 @@ impl UciEngine {
         moves: &[&str],
         depth: u32,
     ) -> Result<SearchResult, UciError> {
+        self.search_depth_with_info(fen, moves, depth)
+            .map(|r| r.result)
+    }
+
+    /// Search and return the final `info` line alongside `bestmove`.
+    pub fn search_depth_with_info(
+        &mut self,
+        fen: &str,
+        moves: &[&str],
+        depth: u32,
+    ) -> Result<crate::parse::SearchWithInfo, UciError> {
         self.send_line("isready")?;
         self.wait_for_token("readyok", Self::DEFAULT_READ_TIMEOUT)?;
 
@@ -68,7 +79,29 @@ impl UciEngine {
         };
         self.send_line(&position)?;
         self.send_line(&format!("go depth {depth}"))?;
-        self.read_bestmove(self.read_timeout)
+        self.read_bestmove_with_info(self.read_timeout)
+    }
+
+    /// Search with MultiPV enabled.
+    pub fn search_depth_multipv(
+        &mut self,
+        fen: &str,
+        moves: &[&str],
+        depth: u32,
+        multipv: u32,
+    ) -> Result<crate::parse::SearchWithInfo, UciError> {
+        self.send_line("isready")?;
+        self.wait_for_token("readyok", Self::DEFAULT_READ_TIMEOUT)?;
+        self.send_line(&format!("setoption name MultiPV value {multipv}"))?;
+
+        let position = if moves.is_empty() {
+            format!("position fen {fen}")
+        } else {
+            format!("position fen {fen} moves {}", moves.join(" "))
+        };
+        self.send_line(&position)?;
+        self.send_line(&format!("go depth {depth}"))?;
+        self.read_bestmove_with_info(self.read_timeout)
     }
 
     /// Send `quit` and wait for the engine process to exit.
@@ -78,7 +111,7 @@ impl UciEngine {
         Ok(())
     }
 
-    fn send_line(&mut self, line: &str) -> Result<(), UciError> {
+    pub(crate) fn send_line(&mut self, line: &str) -> Result<(), UciError> {
         writeln!(self.stdin, "{line}")?;
         self.stdin.flush()?;
         Ok(())
@@ -107,9 +140,13 @@ impl UciEngine {
         }
     }
 
-    fn read_bestmove(&mut self, timeout: Duration) -> Result<SearchResult, UciError> {
+    fn read_bestmove_with_info(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<crate::parse::SearchWithInfo, UciError> {
         let deadline = Instant::now() + timeout;
         let mut line = String::new();
+        let mut last_info = crate::parse::Info::default();
 
         loop {
             if Instant::now() >= deadline {
@@ -120,9 +157,13 @@ impl UciEngine {
             match self.read_line_with_timeout(&mut line, deadline)? {
                 true => {
                     if let Some(result) = parse_bestmove_line(&line)? {
-                        return Ok(result);
+                        return Ok(crate::parse::SearchWithInfo { result, info: last_info });
                     }
-                    let _ = parse_info_line(&line);
+                    if let Some(info) = parse_info_line(&line)? {
+                        if info.depth.is_some() {
+                            last_info = info;
+                        }
+                    }
                 }
                 false => return Err(UciError::ProcessExited),
             }

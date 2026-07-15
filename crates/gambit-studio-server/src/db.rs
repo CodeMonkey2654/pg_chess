@@ -1,11 +1,12 @@
 //! Database query helpers.
 
-use crate::types::{
-    BenchResponse, BenchResult, FilesetView, GameDetail, GameListItem, GamesPage, OpeningMoveStat,
-    PlyView, PositionGamesPage, PositionHit, SourceDetail, SourceListItem, SourceSummary,
-};
 use anyhow::{Context, Result};
 use gambit_ingest::filesets;
+use gambit_proto::{
+    AnalyzeGameResponse, BenchResponse, BenchResult, FilesetView, GameAnalysisSummary, GameDetail,
+    GameListItem, GamesPage, OpeningMoveStat, PlyView, PositionGamesPage, PositionHit,
+    SourceDetail, SourceListItem,
+};
 use std::time::Instant;
 use tokio_postgres::Client;
 
@@ -40,49 +41,9 @@ pub async fn list_sources_fast(client: &Client) -> Result<Vec<SourceListItem>> {
 /// Resolve source id by name.
 pub async fn source_id_by_name(client: &Client, name: &str) -> Result<Option<i32>> {
     let rows = client
-        .query(
-            "SELECT id FROM gambit.sources WHERE name = $1",
-            &[&name],
-        )
+        .query("SELECT id FROM gambit.sources WHERE name = $1", &[&name])
         .await?;
     Ok(rows.first().map(|r| r.get(0)))
-}
-
-/// List all sources with aggregate counts (legacy / summary use).
-pub async fn list_sources(client: &Client) -> Result<Vec<SourceSummary>> {
-    let rows = client
-        .query(
-            "SELECT s.id, s.name, s.description,
-                    COALESCE(g.cnt, 0) AS games,
-                    COALESCE(p.cnt, 0) AS positions,
-                    COALESCE(pl.cnt, 0) AS plies
-             FROM gambit.sources s
-             LEFT JOIN (
-                 SELECT source_id, count(*) AS cnt FROM gambit.games GROUP BY source_id
-             ) g ON g.source_id = s.id
-             LEFT JOIN (
-                 SELECT source_id, count(*) AS cnt FROM gambit.positions GROUP BY source_id
-             ) p ON p.source_id = s.id
-             LEFT JOIN (
-                 SELECT source_id, count(*) AS cnt FROM gambit.plies GROUP BY source_id
-             ) pl ON pl.source_id = s.id
-             ORDER BY s.name",
-            &[],
-        )
-        .await
-        .context("list sources")?;
-
-    Ok(rows
-        .iter()
-        .map(|r| SourceSummary {
-            id: r.get(0),
-            name: r.get(1),
-            description: r.get(2),
-            games: r.get(3),
-            positions: r.get(4),
-            plies: r.get(5),
-        })
-        .collect())
 }
 
 /// Detailed metrics for one source.
@@ -143,41 +104,33 @@ pub async fn search_games(
     let pattern = player.filter(|s| !s.is_empty()).map(|p| format!("%{p}%"));
 
     let total: i64 = match (&pattern, source_id) {
-        (Some(pat), Some(sid)) => {
-            client
-                .query_one(
-                    "SELECT count(*) FROM gambit.games
+        (Some(pat), Some(sid)) => client
+            .query_one(
+                "SELECT count(*) FROM gambit.games
                      WHERE source_id = $1 AND (white ILIKE $2 OR black ILIKE $2)",
-                    &[&sid, pat],
-                )
-                .await?
-                .get(0)
-        }
-        (Some(pat), None) => {
-            client
-                .query_one(
-                    "SELECT count(*) FROM gambit.games
+                &[&sid, pat],
+            )
+            .await?
+            .get(0),
+        (Some(pat), None) => client
+            .query_one(
+                "SELECT count(*) FROM gambit.games
                      WHERE white ILIKE $1 OR black ILIKE $1",
-                    &[pat],
-                )
-                .await?
-                .get(0)
-        }
-        (None, Some(sid)) => {
-            client
-                .query_one(
-                    "SELECT count(*) FROM gambit.games WHERE source_id = $1",
-                    &[&sid],
-                )
-                .await?
-                .get(0)
-        }
-        (None, None) => {
-            client
-                .query_one("SELECT count(*) FROM gambit.games", &[])
-                .await?
-                .get(0)
-        }
+                &[pat],
+            )
+            .await?
+            .get(0),
+        (None, Some(sid)) => client
+            .query_one(
+                "SELECT count(*) FROM gambit.games WHERE source_id = $1",
+                &[&sid],
+            )
+            .await?
+            .get(0),
+        (None, None) => client
+            .query_one("SELECT count(*) FROM gambit.games", &[])
+            .await?
+            .get(0),
     };
 
     let rows = match (&pattern, source_id) {
@@ -253,7 +206,10 @@ pub async fn search_games(
 pub async fn get_game(client: &Client, game_id: i64) -> Result<Option<GameDetail>> {
     let rows = client
         .query(
-            "SELECT id, source_id, white, black, result, event FROM gambit.games WHERE id = $1",
+            "SELECT id, source_id, white, black, result, event,
+                    analysis_status::text, accuracy_white, accuracy_black,
+                    blunders_white, blunders_black, analyzed_at::text
+             FROM gambit.games WHERE id = $1",
             &[&game_id],
         )
         .await?;
@@ -261,17 +217,24 @@ pub async fn get_game(client: &Client, game_id: i64) -> Result<Option<GameDetail
         return Ok(None);
     };
 
+    let source_id: i32 = row.get(1);
+
     let plies = client
         .query(
-            "SELECT ply, san, uci FROM gambit.plies WHERE game_id = $1 ORDER BY ply",
-            &[&game_id],
+            "SELECT ply, san, uci, eval_before, eval_after,
+                    CASE WHEN best_move IS NULL THEN NULL ELSE chess_move_to_uci(best_move) END,
+                    cp_loss, move_class::text
+             FROM gambit.plies
+             WHERE game_id = $1 AND source_id = $2 ORDER BY ply",
+            &[&game_id, &source_id],
         )
         .await?;
 
     let start_fen = client
         .query_opt(
-            "SELECT fen FROM gambit.positions WHERE game_id = $1 AND ply = 0 LIMIT 1",
-            &[&game_id],
+            "SELECT fen FROM gambit.positions
+             WHERE game_id = $1 AND source_id = $2 AND ply = 0 LIMIT 1",
+            &[&game_id, &source_id],
         )
         .await?
         .map(|r| r.get::<_, String>(0))
@@ -290,10 +253,42 @@ pub async fn get_game(client: &Client, game_id: i64) -> Result<Option<GameDetail
                 ply: p.get(0),
                 san: p.get(1),
                 uci: p.get(2),
+                eval_before: p.get::<_, Option<i16>>(3).map(i32::from),
+                eval_after: p.get::<_, Option<i16>>(4).map(i32::from),
+                best_move: p.get(5),
+                cp_loss: p.get::<_, Option<i16>>(6).map(i32::from),
+                move_class: p.get(7),
             })
             .collect(),
         start_fen,
+        analysis: Some(GameAnalysisSummary {
+            status: row.get(6),
+            accuracy_white: row.get(7),
+            accuracy_black: row.get(8),
+            blunders_white: row.get::<_, Option<i16>>(9).map(i32::from),
+            blunders_black: row.get::<_, Option<i16>>(10).map(i32::from),
+            analyzed_at: row.get(11),
+        }),
     }))
+}
+
+/// Run engine analysis on a game and persist results.
+pub async fn run_analyze_game(
+    client: &Client,
+    game_id: i64,
+    depth: u32,
+) -> Result<AnalyzeGameResponse> {
+    let options = gambit_ingest::AnalyzeOptions {
+        depth,
+        ..Default::default()
+    };
+    let result = gambit_ingest::analyze_game(client, game_id, &options).await?;
+    Ok(AnalyzeGameResponse {
+        game_id: result.game_id,
+        accuracy_white: result.summary.accuracy_white.map(|v| v as f32),
+        accuracy_black: result.summary.accuracy_black.map(|v| v as f32),
+        plies_analyzed: result.summary.plies.len() as u32,
+    })
 }
 
 /// Lookup positions by Zobrist hash (limited sample).
@@ -350,107 +345,6 @@ pub async fn games_by_position(
         limit,
         has_more: offset + limit < total,
     })
-}
-
-/// Reconstruct ingest job progress from fileset rows after server restart.
-pub async fn reconstruct_job_from_filesets(
-    client: &Client,
-    source_id: i32,
-    year: i32,
-) -> Result<Option<crate::types::JobStatus>> {
-    let rows = client
-        .query(
-            "SELECT period_label, status, games_loaded
-             FROM gambit.filesets
-             WHERE source_id = $1
-             ORDER BY period_label",
-            &[&source_id],
-        )
-        .await?;
-
-    let year_prefix = format!("{year}-");
-    let shards: Vec<_> = rows
-        .iter()
-        .filter(|r| {
-            let label: String = r.get(0);
-            label.starts_with(&year_prefix)
-        })
-        .collect();
-
-    if shards.is_empty() {
-        return Ok(None);
-    }
-
-    let total_shards = shards.len();
-    let games_loaded: i64 = shards.iter().map(|r| r.get::<_, i64>(2)).sum();
-    let complete = shards
-        .iter()
-        .filter(|r| {
-            let status: String = r.get(1);
-            status == "complete"
-        })
-        .count();
-
-    let active = shards.iter().find(|r| {
-        let status: String = r.get(1);
-        status == "downloading" || status == "ingesting"
-    });
-
-    let failed = shards.iter().find(|r| {
-        let status: String = r.get(1);
-        status == "failed"
-    });
-
-    if complete == total_shards {
-        return Ok(Some(crate::types::JobStatus {
-            id: 0,
-            status: "complete".to_string(),
-            message: format!("loaded {games_loaded} games across {total_shards} shards"),
-            current_shard: total_shards,
-            total_shards,
-            games_loaded: games_loaded as u64,
-            games_per_min: None,
-        }));
-    }
-
-    if let Some(f) = failed {
-        let label: String = f.get(0);
-        let games: i64 = f.get(2);
-        return Ok(Some(crate::types::JobStatus {
-            id: 0,
-            status: "failed".to_string(),
-            message: format!("shard {label} failed after {games} games"),
-            current_shard: complete + 1,
-            total_shards,
-            games_loaded: games_loaded as u64,
-            games_per_min: None,
-        }));
-    }
-
-    let (current_shard, message) = if let Some(a) = active {
-        let label: String = a.get(0);
-        let status: String = a.get(1);
-        let games: i64 = a.get(2);
-        (
-            complete + 1,
-            format!("{status} shard {label} ({games} games in shard)"),
-        )
-    } else {
-        (
-            complete + 1,
-            format!("{complete}/{total_shards} shards complete · resuming…"),
-        )
-    };
-
-    Ok(Some(crate::types::JobStatus {
-        id: 0,
-        status: "running".to_string(),
-        message,
-        current_shard,
-        total_shards,
-        games_loaded: games_loaded as u64,
-        games_per_min: None,
-    }))
 }
 
 /// Compute Zobrist hash for a FEN string.

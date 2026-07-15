@@ -1,0 +1,11 @@
+{
+  "name": "gambit-studio-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:studio": "playwright test studio"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

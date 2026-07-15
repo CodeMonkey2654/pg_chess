@@ -2,7 +2,7 @@
 
 mod chess_board;
 pub mod fen;
-pub mod uci;
 mod piece;
+pub mod uci;
 
 pub use chess_board::{BoardOrientation, ChessBoard};

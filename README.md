@@ -9,7 +9,9 @@ Chess positions, moves, and games for PostgreSQL — powered by the **gambit-db*
 | [`gambit-db`](crates/gambit-db/) | Core chess engine (`cargo add gambit-db`) |
 | [`gambit-analysis`](crates/gambit-analysis/) | Native analysis engine (negamax, TT, eval) |
 | [`gambit-ingest`](crates/gambit-ingest/) | Bulk PGN ingest CLI (`gambit-ingest import`) |
-| [`gambit-studio-server`](crates/gambit-studio-server/) | REST API for database browser + Lichess ingest jobs |
+| [`gambit-ingest-worker`](crates/gambit-ingest-worker/) | gRPC ingest worker (Lichess sync/load, job streaming) |
+| [`gambit-proto`](crates/gambit-proto/) | Shared protobuf + gRPC stubs |
+| [`gambit-studio-server`](crates/gambit-studio-server/) | gRPC API for database browser (grpc-web for WASM) |
 | [`gambit-studio-ui`](crates/gambit-studio-ui/) | WASM frontend ([docs/studio.md](docs/studio.md)) |
 | [`gambit-uci`](crates/gambit-uci/) | UCI client + native `gambit-analysis` binary |
 | [`pg_chess`](crates/pg_chess/) | PostgreSQL extension (`CREATE EXTENSION pg_chess`) |
@@ -71,7 +73,7 @@ See [docs/analysis.md](docs/analysis.md) for corpus book workflow.
 
 ## Status
 
-Production foundation: workspace split, perft correctness suite, criterion benchmarks with CI regression gates, SAN/PGN, strict FEN, bulk ingest (`gambit-ingest`), native analysis (`gambit-analysis`), Python bindings (`gambit-py`), and UCI client/server (`gambit-uci`). See `docs/` for architecture, SQL API, [ingest guide](docs/ingest.md), [analysis guide](docs/analysis.md), and the [roadmap](roadmap.md).
+Production foundation: workspace split, perft correctness suite, criterion benchmarks with CI regression gates, SAN/PGN, strict FEN, bulk ingest (`gambit-ingest`), native analysis (`gambit-analysis`), Python bindings (`gambit-py`), and UCI client/server (`gambit-uci`). See `docs/` for architecture, SQL API, [ingest guide](docs/ingest.md), [analysis guide](docs/analysis.md), and the [roadmap](docs/roadmap.md).
 
 ### Benchmark regression budget
 

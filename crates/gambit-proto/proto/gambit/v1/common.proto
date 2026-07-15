@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package gambit.v1;
+
+message HealthResponse {
+  string status = 1;
+  bool database_ok = 2;
+}
+
+message SourceListItem {
+  int32 id = 1;
+  string name = 2;
+  optional string description = 3;
+}
+
+message SourceDetail {
+  int32 id = 1;
+  string name = 2;
+  int64 games = 3;
+  int64 positions = 4;
+  int64 plies = 5;
+  string positions_table_size = 6;
+}
+
+message FilesetView {
+  int64 id = 1;
+  int32 source_id = 2;
+  string remote_url = 3;
+  string filename = 4;
+  string period_label = 5;
+  string status = 6;
+  int64 games_loaded = 7;
+  int64 games_errors = 8;
+  int64 positions_loaded = 9;
+  optional string error_message = 10;
+}
+
+message SyncCatalogRequest {
+  string source = 1;
+  int32 year = 2;
+}
+
+message SyncCatalogResponse {
+  uint32 synced = 1;
+}
+
+message LoadYearRequest {
+  string source = 1;
+  int32 year = 2;
+}
+
+message JobStarted {
+  uint64 job_id = 1;
+}
+
+message JobStatus {
+  uint64 id = 1;
+  string status = 2;
+  string message = 3;
+  uint32 current_shard = 4;
+  uint32 total_shards = 5;
+  uint64 games_loaded = 6;
+  optional double games_per_min = 7;
+}
+
+message GetJobRequest {
+  uint64 job_id = 1;
+}
+
+message GetActiveJobRequest {
+  optional string source_name = 1;
+  optional int32 year = 2;
+}
+
+message OptionalJobStatus {
+  optional JobStatus job = 1;
+}
+
+message WatchJobRequest {
+  uint64 job_id = 1;
+  optional string source_name = 2;
+  optional int32 year = 3;
+}
+
+message GameListItem {
+  int64 id = 1;
+  optional string white = 2;
+  optional string black = 3;
+  string result = 4;
+  optional string game_date = 5;
+  int32 ply_count = 6;
+}
+
+message GamesPage {
+  repeated GameListItem games = 1;
+  int64 total = 2;
+  int64 offset = 3;
+  int64 limit = 4;
+  bool has_more = 5;
+}
+
+message PlyView {
+  int32 ply = 1;
+  string san = 2;
+  string uci = 3;
+  optional int32 eval_before = 4;
+  optional int32 eval_after = 5;
+  optional string best_move = 6;
+  optional int32 cp_loss = 7;
+  optional string move_class = 8;
+}
+
+message GameAnalysisSummary {
+  string status = 1;
+  optional float accuracy_white = 2;
+  optional float accuracy_black = 3;
+  optional int32 blunders_white = 4;
+  optional int32 blunders_black = 5;
+  optional string analyzed_at = 6;
+}
+
+message GameDetail {
+  int64 id = 1;
+  int32 source_id = 2;
+  optional string white = 3;
+  optional string black = 4;
+  string result = 5;
+  optional string event = 6;
+  repeated PlyView plies = 7;
+  string start_fen = 8;
+  optional GameAnalysisSummary analysis = 9;
+}
+
+message AnalyzeGameRequest {
+  int64 game_id = 1;
+  uint32 depth = 2;
+}
+
+message AnalyzeGameResponse {
+  int64 game_id = 1;
+  optional float accuracy_white = 2;
+  optional float accuracy_black = 3;
+  uint32 plies_analyzed = 4;
+}
+
+message HashFromFenRequest {
+  string fen = 1;
+}
+
+message HashFromFenResponse {
+  int64 hash = 1;
+}
+
+message PositionHit {
+  int64 game_id = 1;
+  optional string white = 2;
+  optional string black = 3;
+  int32 ply = 4;
+  string fen = 5;
+}
+
+message PositionGamesPage {
+  repeated PositionHit hits = 1;
+  int64 total = 2;
+  int64 offset = 3;
+  int64 limit = 4;
+  bool has_more = 5;
+}
+
+message OpeningMoveStat {
+  string move_uci = 1;
+  int64 count = 2;
+  int64 white_wins = 3;
+  int64 black_wins = 4;
+  int64 draws = 5;
+}
+
+message BenchResult {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  double latency_ms = 4;
+  int64 rows = 5;
+}
+
+message BenchResponse {
+  repeated BenchResult results = 1;
+}
+
+message LoadFilesetRequest {
+  string source = 1;
+  int32 year = 2;
+  string cache_dir = 3;
+  uint32 workers = 4;
+  uint32 batch_games = 5;
+  optional int64 fileset_id = 6;
+}
+
+message LoadFilesetResponse {
+  uint32 shards_loaded = 1;
+  uint64 total_games = 2;
+}

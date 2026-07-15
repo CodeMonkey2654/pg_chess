@@ -19,6 +19,7 @@ pg_test = []
 pg_bench = ["dep:pgrx-bench"]
 
 [dependencies]
+gambit-analysis = { path = "../gambit-analysis" }
 gambit-db = { path = "../gambit-db" }
 pgrx = "=0.19.1"
 serde = { version = "1", features = ["derive"] }

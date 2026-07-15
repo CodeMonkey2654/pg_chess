@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::SinkExt;
 use gambit_db::{ExplodedGame, PlyRow, PositionRow};
+use rayon::prelude::*;
 use std::time::{Duration, Instant};
 use tokio_postgres::Client;
 
@@ -53,28 +54,30 @@ async fn copy_staging_games(client: &Client, games: &[StagingGameRow]) -> Result
         });
     }
     let fmt_start = Instant::now();
-    let mut data = String::new();
-    for g in games {
-        let row = format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            g.batch_seq,
-            copy_field(g.pgn_text.as_deref()),
-            copy_field(g.pgn_sha256.as_ref().map(|b| hex_bytes(b)).as_deref()),
-            copy_field(g.pgn_byte_offset.map(|v| v.to_string()).as_deref()),
-            copy_field(g.white.as_deref()),
-            copy_field(g.black.as_deref()),
-            copy_field(g.white_elo.map(|v| v.to_string()).as_deref()),
-            copy_field(g.black_elo.map(|v| v.to_string()).as_deref()),
-            copy_field(g.event.as_deref()),
-            copy_field(g.site.as_deref()),
-            copy_field(g.round.as_deref()),
-            copy_field(g.game_date.map(|d| d.to_string()).as_deref()),
-            copy_field_req(&g.result),
-            copy_field(g.eco.as_deref()),
-            g.ply_count,
-        );
-        data.push_str(&row);
-    }
+    let parts: Vec<String> = games
+        .par_iter()
+        .map(|g| {
+            format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                g.batch_seq,
+                copy_field(g.pgn_text.as_deref()),
+                copy_field(g.pgn_sha256.as_ref().map(|b| hex_bytes(b)).as_deref()),
+                copy_field(g.pgn_byte_offset.map(|v| v.to_string()).as_deref()),
+                copy_field(g.white.as_deref()),
+                copy_field(g.black.as_deref()),
+                copy_field(g.white_elo.map(|v| v.to_string()).as_deref()),
+                copy_field(g.black_elo.map(|v| v.to_string()).as_deref()),
+                copy_field(g.event.as_deref()),
+                copy_field(g.site.as_deref()),
+                copy_field(g.round.as_deref()),
+                copy_field(g.game_date.map(|d| d.to_string()).as_deref()),
+                copy_field_req(&g.result),
+                copy_field(g.eco.as_deref()),
+                g.ply_count,
+            )
+        })
+        .collect();
+    let data = parts.concat();
     let format = fmt_start.elapsed();
     let bytes = data.len() as u64;
     let send = copy_in(
@@ -104,16 +107,19 @@ async fn copy_staging_positions(
         });
     }
     let fmt_start = Instant::now();
-    let mut data = String::new();
-    for (batch_seq, pos) in positions {
-        data.push_str(&format!(
-            "{}\t{}\t{}\t{}\n",
-            batch_seq,
-            pos.ply,
-            copy_field_req(&pos.fen),
-            pos.hash as i64,
-        ));
-    }
+    let parts: Vec<String> = positions
+        .par_iter()
+        .map(|(batch_seq, pos)| {
+            format!(
+                "{}\t{}\t{}\t{}\n",
+                batch_seq,
+                pos.ply,
+                copy_field_req(&pos.fen),
+                pos.hash as i64,
+            )
+        })
+        .collect();
+    let data = parts.concat();
     let format = fmt_start.elapsed();
     let bytes = data.len() as u64;
     let send = copy_in(
@@ -138,16 +144,19 @@ async fn copy_staging_plies(client: &Client, plies: &[(i32, &PlyRow)]) -> Result
         });
     }
     let fmt_start = Instant::now();
-    let mut data = String::new();
-    for (batch_seq, ply) in plies {
-        data.push_str(&format!(
-            "{}\t{}\t{}\t{}\n",
-            batch_seq,
-            ply.ply,
-            copy_field_req(&ply.uci),
-            copy_field_req(&ply.san),
-        ));
-    }
+    let parts: Vec<String> = plies
+        .par_iter()
+        .map(|(batch_seq, ply)| {
+            format!(
+                "{}\t{}\t{}\t{}\n",
+                batch_seq,
+                ply.ply,
+                copy_field_req(&ply.uci),
+                copy_field_req(&ply.san),
+            )
+        })
+        .collect();
+    let data = parts.concat();
     let format = fmt_start.elapsed();
     let bytes = data.len() as u64;
     let send = copy_in(
@@ -189,7 +198,9 @@ pub type StagingBatch = (
 );
 
 /// Build staging rows from parsed exploded games.
-pub fn build_staging_rows(batch: &[(i32, ExplodedGame, Option<String>, GameProvenance)]) -> StagingBatch {
+pub fn build_staging_rows(
+    batch: &[(i32, ExplodedGame, Option<String>, GameProvenance)],
+) -> StagingBatch {
     let mut games = Vec::with_capacity(batch.len());
     let mut positions = Vec::new();
     let mut plies = Vec::new();

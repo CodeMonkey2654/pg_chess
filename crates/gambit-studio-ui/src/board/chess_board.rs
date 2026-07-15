@@ -171,7 +171,9 @@ pub fn ChessBoard(
     };
 
     let square_from_event = |ev: &leptos::ev::MouseEvent| -> Option<String> {
-        let mut el = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+        let mut el = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
         while let Some(node) = el {
             if let Some(sq) = node.get_attribute("data-square") {
                 return Some(sq);

@@ -87,6 +87,23 @@ cargo test -p gambit-analysis --test puzzles
 
 Puzzle tests verify mate-in-one detection and score consistency.
 
+## PostgreSQL integration
+
+Analysis types and pure functions live in the **`pg_chess` extension** (rebuild/reinstall after changes):
+
+| SQL type / function | Purpose |
+|---------------------|---------|
+| `chess_move_class` | Move quality enum |
+| `chess_eval_source` | Engine backend enum |
+| `chess_analysis_status` | Game analysis status enum |
+| `chess_classify_cp_loss(int)` | Lichess-style cp-loss bands |
+| `chess_accuracy_from_classes(text[])` | Weighted accuracy % |
+| `chess_eval_to_cp(cp, mate_plies)` | Normalize score to centipawns |
+
+The **`gambit` schema migration** (`005_analysis.sql`) adds columns on `gambit.plies` / `gambit.games`, the `position_evals` cache table, and bulk-write helpers (`merge_ply_analysis`, `rollup_game_analysis`). It references extension types — run `CREATE EXTENSION pg_chess` (or upgrade) before applying migration 005.
+
+Rust classification logic is shared: `gambit-analysis::classify` is called from both application code and `pg_chess` SQL functions.
+
 ## Optional features
 
 | Feature | Crate | Description |

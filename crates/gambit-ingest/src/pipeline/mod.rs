@@ -4,7 +4,7 @@ use anyhow::Result;
 use gambit_db::{explode_mainline, parse_pgn, split_pgn_games, ExplodedGame, PgnError};
 use rayon::prelude::*;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Provenance metadata for a parsed game within a fileset shard.
@@ -24,6 +24,66 @@ pub struct ParsedGame {
     pub exploded: ExplodedGame,
     /// Optional shard provenance.
     pub provenance: GameProvenance,
+}
+
+/// Unparsed PGN chunk from a streaming reader.
+pub struct RawGameChunk {
+    /// Raw PGN text for one game.
+    pub text: String,
+    /// Byte offset within the decompressed stream.
+    pub byte_offset: i64,
+}
+
+/// Parse a batch of raw chunks in parallel. Returns parsed games and error count.
+pub fn parse_chunks_parallel(
+    chunks: &[RawGameChunk],
+    workers: usize,
+    store_pgn: bool,
+    provenance_base: &GameProvenance,
+    fail_fast: bool,
+    profile: &mut Option<crate::profile::IngestProfile>,
+) -> Result<(Vec<ParsedGame>, usize)> {
+    if chunks.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers.max(1))
+        .build()
+        .map_err(|e| anyhow::anyhow!("thread pool: {e}"))?;
+
+    let games_err = AtomicUsize::new(0);
+    let start = Instant::now();
+
+    let parsed: Vec<ParsedGame> = pool.install(|| {
+        chunks
+            .par_iter()
+            .filter_map(|chunk| {
+                let provenance = GameProvenance {
+                    pgn_sha256: provenance_base.pgn_sha256.clone(),
+                    pgn_byte_offset: Some(chunk.byte_offset),
+                };
+                match parse_one(&chunk.text, store_pgn, provenance) {
+                    Ok(game) => Some(game),
+                    Err(e) => {
+                        games_err.fetch_add(1, Ordering::Relaxed);
+                        eprintln!("skip game: {e}");
+                        if fail_fast {
+                            panic!("fail-fast: {e}");
+                        }
+                        None
+                    }
+                }
+            })
+            .collect()
+    });
+
+    let elapsed = start.elapsed();
+    if let Some(p) = profile {
+        p.record_count("parse.explode_parallel", elapsed, parsed.len() as u64);
+    }
+
+    Ok((parsed, games_err.load(Ordering::Relaxed)))
 }
 
 /// Statistics from a parse or ingest run.
@@ -93,22 +153,25 @@ pub fn parse_file_parallel(
     let parsed: Vec<ParsedGame> = pool.install(|| {
         chunks
             .par_iter()
-            .filter_map(|chunk| match parse_one(chunk, store_pgn, GameProvenance::default()) {
-                Ok(game) => {
-                    games_ok.fetch_add(1, Ordering::Relaxed);
-                    positions.fetch_add(game.exploded.positions.len() as u64, Ordering::Relaxed);
-                    plies.fetch_add(game.exploded.plies.len() as u64, Ordering::Relaxed);
-                    Some(game)
-                }
-                Err(e) => {
-                    games_err.fetch_add(1, Ordering::Relaxed);
-                    eprintln!("skip game: {e}");
-                    if fail_fast {
-                        panic!("fail-fast: {e}");
+            .filter_map(
+                |chunk| match parse_one(chunk, store_pgn, GameProvenance::default()) {
+                    Ok(game) => {
+                        games_ok.fetch_add(1, Ordering::Relaxed);
+                        positions
+                            .fetch_add(game.exploded.positions.len() as u64, Ordering::Relaxed);
+                        plies.fetch_add(game.exploded.plies.len() as u64, Ordering::Relaxed);
+                        Some(game)
                     }
-                    None
-                }
-            })
+                    Err(e) => {
+                        games_err.fetch_add(1, Ordering::Relaxed);
+                        eprintln!("skip game: {e}");
+                        if fail_fast {
+                            panic!("fail-fast: {e}");
+                        }
+                        None
+                    }
+                },
+            )
             .collect()
     });
 

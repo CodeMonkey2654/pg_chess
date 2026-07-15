@@ -3,6 +3,8 @@ members = [
     "crates/gambit-db",
     "crates/gambit-analysis",
     "crates/gambit-ingest",
+    "crates/gambit-ingest-worker",
+    "crates/gambit-proto",
     "crates/gambit-py",
     "crates/gambit-uci",
     "crates/gambit-db-wasm",

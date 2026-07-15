@@ -76,6 +76,22 @@ pub async fn list_filesets(client: &Client, source_id: i32) -> Result<Vec<Filese
     Ok(rows.iter().map(map_fileset_row).collect())
 }
 
+/// Load filesets for a calendar year, skipping complete unless retrying failures.
+pub async fn filesets_for_year(
+    client: &Client,
+    source_id: i32,
+    year: i32,
+    skip_complete: bool,
+) -> Result<Vec<FilesetRow>> {
+    let year_prefix = format!("{year}-");
+    Ok(list_filesets(client, source_id)
+        .await?
+        .into_iter()
+        .filter(|f| f.period_label.starts_with(&year_prefix))
+        .filter(|f| !(skip_complete && f.status == "complete"))
+        .collect())
+}
+
 /// Fetch one fileset by id.
 pub async fn get_fileset(client: &Client, fileset_id: i64) -> Result<Option<FilesetRow>> {
     let rows = client

@@ -1,0 +1,23 @@
+[package]
+name = "gambit-ingest-worker"
+version = "0.1.0"
+edition = "2021"
+description = "gRPC ingest worker for Gambit Studio"
+license = "MIT"
+
+[[bin]]
+name = "gambit-ingest-worker"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+gambit-ingest = { path = "../gambit-ingest" }
+gambit-proto = { path = "../gambit-proto", features = ["server"] }
+prost = "0.13"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-stream = "0.3"
+tonic = { version = "0.12", features = ["transport"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio-postgres = "0.7"

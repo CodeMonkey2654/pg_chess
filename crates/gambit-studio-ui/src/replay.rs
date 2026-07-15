@@ -1,8 +1,8 @@
 //! Game replay helpers.
 
-use crate::api_types::GameDetail;
 use crate::board::uci::parse_uci;
 use gambit_db_wasm::WasmPosition;
+use gambit_proto::GameDetail;
 
 /// Error applying moves during replay.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub fn position_at_ply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api_types::PlyView;
+    use gambit_proto::{GameDetail, PlyView};
 
     #[test]
     fn start_position_at_ply_zero() {
@@ -51,8 +51,14 @@ mod tests {
                 ply: 1,
                 san: "e4".into(),
                 uci: "e2e4".into(),
+                eval_before: None,
+                eval_after: None,
+                best_move: None,
+                cp_loss: None,
+                move_class: None,
             }],
             start_fen: gambit_db_wasm::start_fen(),
+            analysis: None,
         };
         let (pos, last) = position_at_ply(&detail, 0).unwrap();
         assert_eq!(pos.to_fen(), detail.start_fen);

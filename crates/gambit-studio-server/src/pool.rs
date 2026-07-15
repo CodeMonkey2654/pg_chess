@@ -15,6 +15,10 @@ impl PgPool {
     pub fn new(pg_uri: &str) -> Result<Self> {
         let mut cfg = Config::new();
         cfg.url = Some(pg_uri.to_string());
+        cfg.pool = Some(deadpool_postgres::PoolConfig {
+            max_size: 16,
+            ..Default::default()
+        });
         let pool = cfg
             .create_pool(Some(Runtime::Tokio1), NoTls)
             .context("create postgres pool")?;

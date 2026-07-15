@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package gambit.v1;
+
+import "gambit/v1/common.proto";
+
+service StudioService {
+  rpc Health(Empty) returns (HealthResponse);
+  rpc ListSources(Empty) returns (ListSourcesResponse);
+  rpc GetSourceSummary(GetSourceSummaryRequest) returns (SourceDetail);
+  rpc ListFilesets(ListFilesetsRequest) returns (ListFilesetsResponse);
+  rpc SearchGames(SearchGamesRequest) returns (GamesPage);
+  rpc GetGame(GetGameRequest) returns (GameDetail);
+  rpc GamesByPosition(GamesByPositionRequest) returns (PositionGamesPage);
+  rpc HashFromFen(HashFromFenRequest) returns (HashFromFenResponse);
+  rpc LookupPosition(LookupPositionRequest) returns (LookupPositionResponse);
+  rpc OpeningStats(OpeningStatsRequest) returns (OpeningStatsResponse);
+  rpc RunBench(Empty) returns (BenchResponse);
+  rpc AnalyzeGame(AnalyzeGameRequest) returns (AnalyzeGameResponse);
+
+  // Ingest RPCs proxied to gambit-ingest-worker
+  rpc SyncCatalog(SyncCatalogRequest) returns (SyncCatalogResponse);
+  rpc LoadYear(LoadYearRequest) returns (JobStarted);
+  rpc GetJob(GetJobRequest) returns (JobStatus);
+  rpc GetActiveJob(GetActiveJobRequest) returns (OptionalJobStatus);
+  rpc WatchJob(WatchJobRequest) returns (stream JobStatus);
+}
+
+message Empty {}
+
+message ListSourcesResponse {
+  repeated SourceListItem sources = 1;
+}
+
+message GetSourceSummaryRequest {
+  int32 source_id = 1;
+}
+
+message ListFilesetsRequest {
+  optional int32 source_id = 1;
+  optional string source_name = 2;
+}
+
+message ListFilesetsResponse {
+  repeated FilesetView filesets = 1;
+}
+
+message SearchGamesRequest {
+  optional string player = 1;
+  optional int32 source_id = 2;
+  int64 offset = 3;
+  int64 limit = 4;
+}
+
+message GetGameRequest {
+  int64 game_id = 1;
+}
+
+message GamesByPositionRequest {
+  int64 hash = 1;
+  int64 offset = 2;
+  int64 limit = 3;
+}
+
+message LookupPositionRequest {
+  int64 hash = 1;
+}
+
+message LookupPositionResponse {
+  repeated PositionHit hits = 1;
+}
+
+message OpeningStatsRequest {
+  int64 hash = 1;
+}
+
+message OpeningStatsResponse {
+  repeated OpeningMoveStat stats = 1;
+}

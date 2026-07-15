@@ -136,19 +136,48 @@ LIMIT 20;
 
 ## Lichess fileset (full year)
 
-Sync the Lichess catalog and load all 12 monthly shards for a year:
+Sync the Lichess catalog and load all 12 monthly shards for a year (requires `gambit-ingest-worker` on `:8082`):
 
 ```powershell
 cargo run -p gambit-ingest --release -- sync-catalog `
-  --pg-uri $env:DATABASE_URL `
   --source lichess_standard_2024 `
   --year 2024
 
 cargo run -p gambit-ingest --release -- load-fileset `
-  --pg-uri $env:DATABASE_URL `
   --source lichess_standard_2024 `
   --year 2024 `
-  --cache-dir .cache/lichess
+  --cache-dir .cache/lichess `
+  --workers 8
 ```
+
+Use `--ingest-addr http://127.0.0.1:8082` to override the worker address. `migrate`, `import`, `refresh-stats`, and `export-book` still use direct Postgres (`--pg-uri` / `DATABASE_URL`).
+
+Post-load:
+
+```powershell
+cargo run -p gambit-ingest --release -- refresh-stats --pg-uri $env:DATABASE_URL
+cargo run -p gambit-ingest --release -- export-book --pg-uri $env:DATABASE_URL --output corpus.gbook
+```
+
+## Game analysis
+
+Analyze games with Stockfish (or native search fallback) and persist eval/classification on `gambit.plies`:
+
+```powershell
+# Single game
+cargo run -p gambit-ingest --release -- analyze-game `
+  --pg-uri $env:DATABASE_URL `
+  --game-id 123 `
+  --depth 14
+
+# Batch unanalyzed games for a source
+cargo run -p gambit-ingest --release -- analyze-batch `
+  --pg-uri $env:DATABASE_URL `
+  --source lichess_standard_2024 `
+  --limit 50 `
+  --depth 12
+```
+
+Set `GAMBIT_STOCKFISH_PATH` to your Stockfish binary. Results roll up to `gambit.games` (accuracy, blunder counts) via `gambit.rollup_game_analysis()`.
 
 See [Gambit Studio](studio.md) for the WASM database browser UI.

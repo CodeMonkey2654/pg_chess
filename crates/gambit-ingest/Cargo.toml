@@ -29,6 +29,7 @@ clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 gambit-db = { path = "../gambit-db" }
 gambit-analysis = { path = "../gambit-analysis" }
+gambit-uci = { path = "../gambit-uci" }
 hex = "0.4"
 indicatif = "0.17"
 rayon = "1"
@@ -41,5 +42,7 @@ tokio-postgres = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zstd = "0.13"
+gambit-proto = { path = "../gambit-proto", features = ["client"] }
+tonic = { version = "0.12", features = ["transport"] }
 
 [dev-dependencies]

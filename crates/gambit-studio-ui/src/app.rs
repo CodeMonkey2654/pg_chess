@@ -1,16 +1,17 @@
 //! Gambit Studio UI components.
 
 use crate::api;
-use crate::api_types::{
-    BenchResponse, FilesetView, GameDetail, GameListItem, JobStatus, OpeningMoveStat,
-    PositionHit, SourceDetail, SourceListItem,
-};
 use crate::board::uci::parse_uci;
 use crate::board::{BoardOrientation, ChessBoard};
 use crate::brand::{HealthBadge, Logo};
 use crate::format::format_num;
+use crate::job_poll::{filesets_query_name, parse_download_progress, spawn_job_watching};
 use crate::replay::{position_at_ply, ReplayError};
 use gambit_db_wasm::WasmPosition;
+use gambit_proto::{
+    BenchResponse, FilesetView, GameDetail, GameListItem, JobStatus, OpeningMoveStat, PositionHit,
+    SourceDetail, SourceListItem,
+};
 use leptos::prelude::*;
 
 const GAMES_PAGE_SIZE: i64 = 40;
@@ -24,16 +25,6 @@ enum Page {
     Benchmarks,
 }
 
-fn parse_download_progress(msg: &str) -> Option<(f64, f64)> {
-    let open = msg.find('(')?;
-    let close = msg.find(')')?;
-    let inner = msg.get(open + 1..close)?;
-    let mut parts = inner.split('/');
-    let current: f64 = parts.next()?.trim().split_whitespace().next()?.parse().ok()?;
-    let total: f64 = parts.next()?.trim().split_whitespace().next()?.parse().ok()?;
-    Some((current, total))
-}
-
 fn shard_status_label(status: &str) -> &'static str {
     match status {
         "complete" => "Done",
@@ -42,6 +33,34 @@ fn shard_status_label(status: &str) -> &'static str {
         "failed" => "Failed",
         _ => "Pending",
     }
+}
+
+fn move_class_label(class: &str) -> &'static str {
+    match class {
+        "best" => "Best",
+        "good" => "Good",
+        "inaccuracy" => "Inaccuracy",
+        "mistake" => "Mistake",
+        "blunder" => "Blunder",
+        _ => "",
+    }
+}
+
+fn move_class_css(class: &str) -> &'static str {
+    match class {
+        "best" => "move-best",
+        "good" => "move-good",
+        "inaccuracy" => "move-inaccuracy",
+        "mistake" => "move-mistake",
+        "blunder" => "move-blunder",
+        _ => "",
+    }
+}
+
+fn format_accuracy(value: Option<f32>) -> String {
+    value
+        .map(|v| format!("{v:.1}%"))
+        .unwrap_or_else(|| "—".to_string())
 }
 
 fn event_target_value(ev: &leptos::ev::Event) -> String {
@@ -53,9 +72,7 @@ fn event_target_value(ev: &leptos::ev::Event) -> String {
 }
 
 fn fen_hash_local(fen: &str) -> Option<i64> {
-    WasmPosition::from_fen(fen)
-        .ok()
-        .map(|p| p.zobrist_hash())
+    WasmPosition::from_fen(fen).ok().map(|p| p.zobrist_hash())
 }
 
 async fn resolve_position_hash(fen: &str) -> Result<i64, String> {
@@ -65,87 +82,11 @@ async fn resolve_position_hash(fen: &str) -> Result<i64, String> {
     api::hash_from_fen(fen).await
 }
 
-fn filesets_query_name(
-    selected: Option<i32>,
-    sources: &[SourceListItem],
-    load_form_name: &str,
-) -> String {
-    selected
-        .and_then(|id| {
-            sources
-                .iter()
-                .find(|s| s.id == id)
-                .map(|s| s.name.clone())
-        })
-        .unwrap_or_else(|| load_form_name.to_string())
-}
-
 fn replay_error_message(err: &ReplayError) -> String {
     match err {
         ReplayError::InvalidFen(f) => format!("Invalid start FEN: {f}"),
         ReplayError::InvalidMove { ply, uci } => format!("Invalid move at ply {ply}: {uci}"),
     }
-}
-
-fn spawn_job_polling(
-    job_id: u64,
-    set_job: WriteSignal<Option<JobStatus>>,
-    set_filesets: WriteSignal<Vec<FilesetView>>,
-    set_source_detail: WriteSignal<Option<SourceDetail>>,
-    set_sources: WriteSignal<Vec<SourceListItem>>,
-    set_sources_error: WriteSignal<Option<String>>,
-    selected_source: ReadSignal<Option<i32>>,
-    source_name: ReadSignal<String>,
-    sources: ReadSignal<Vec<SourceListItem>>,
-) {
-    leptos::task::spawn_local(async move {
-        let mut tick: u32 = 0;
-        loop {
-            let done = match api::fetch_job(job_id).await {
-                Ok(j) => {
-                    let finished = j.status == "complete" || j.status == "failed";
-                    set_job.set(Some(j));
-                    finished
-                }
-                Err(e) => {
-                    set_job.set(None);
-                    let _ = e;
-                    true
-                }
-            };
-
-            let name = filesets_query_name(
-                selected_source.get_untracked(),
-                &sources.get_untracked(),
-                &source_name.get_untracked(),
-            );
-            if let Ok(list) = api::fetch_filesets_by_name(&name).await {
-                set_filesets.set(list);
-            }
-
-            if tick % 5 == 0 {
-                if let Some(id) = selected_source.get_untracked() {
-                    if let Ok(detail) = api::fetch_source_detail(id).await {
-                        set_source_detail.set(Some(detail));
-                    }
-                }
-            }
-
-            match api::fetch_sources().await {
-                Ok(list) => {
-                    set_sources.set(list);
-                    set_sources_error.set(None);
-                }
-                Err(e) => set_sources_error.set(Some(e)),
-            }
-
-            if done {
-                break;
-            }
-            tick = tick.wrapping_add(1);
-            gloo_timers::future::TimeoutFuture::new(2000).await;
-        }
-    });
 }
 
 #[component]
@@ -160,6 +101,8 @@ pub fn App() -> impl IntoView {
     let (filesets, set_filesets) = signal(Vec::<FilesetView>::new());
     let (job, set_job) = signal(None::<JobStatus>);
     let (status_msg, set_status_msg) = signal(String::new());
+    let (sync_loading, set_sync_loading) = signal(false);
+    let (load_loading, set_load_loading) = signal(false);
     let (load_year, set_load_year) = signal(2024_i32);
     let (source_name, set_source_name) = signal("lichess_standard_2024".to_string());
     let (healthy, set_healthy) = signal(true);
@@ -230,10 +173,13 @@ pub fn App() -> impl IntoView {
         let yr = load_year.get_untracked();
         leptos::task::spawn_local(async move {
             match api::fetch_active_job(&sn, yr).await {
-                Ok(Some(j)) => {
+                Ok(Some(j)) if j.status == "running" => {
                     set_job.set(Some(j.clone()));
-                    spawn_job_polling(
+                    spawn_job_watching(
                         j.id,
+                        j.id == 0,
+                        sn,
+                        yr,
                         set_job,
                         set_filesets,
                         set_source_detail,
@@ -244,6 +190,7 @@ pub fn App() -> impl IntoView {
                         sources,
                     );
                 }
+                Ok(Some(j)) => set_job.set(Some(j)),
                 Ok(None) => {}
                 Err(e) => set_status_msg.set(format!("active job error: {e}")),
             }
@@ -276,6 +223,7 @@ pub fn App() -> impl IntoView {
     let on_sync = move |_| {
         let source = source_name.get();
         let year = load_year.get();
+        set_sync_loading.set(true);
         leptos::task::spawn_local(async move {
             match api::sync_catalog(&source, year).await {
                 Ok(r) => {
@@ -285,18 +233,23 @@ pub fn App() -> impl IntoView {
             }
             refresh_sources();
             refresh_filesets();
+            set_sync_loading.set(false);
         });
     };
 
     let on_load = move |_| {
         let source = source_name.get();
         let year = load_year.get();
+        set_load_loading.set(true);
         leptos::task::spawn_local(async move {
             match api::load_year(&source, year).await {
                 Ok(started) => {
                     set_status_msg.set(format!("Ingest job {} started", started.job_id));
-                    spawn_job_polling(
+                    spawn_job_watching(
                         started.job_id,
+                        false,
+                        source.clone(),
+                        year,
                         set_job,
                         set_filesets,
                         set_source_detail,
@@ -309,6 +262,7 @@ pub fn App() -> impl IntoView {
                 }
                 Err(e) => set_status_msg.set(format!("Load failed: {e}")),
             }
+            set_load_loading.set(false);
         });
     };
 
@@ -351,10 +305,13 @@ pub fn App() -> impl IntoView {
                             set_source_name=set_source_name
                             on_sync=on_sync
                             on_load=on_load
+                            sync_loading=sync_loading
+                            load_loading=load_loading
                         />
                     }.into_any(),
                     Page::Games => view! {
                         <GamesPanel
+                            selected_source=selected_source
                             pending_game_id=pending_game_id
                             pending_ply=pending_ply
                             set_pending_game_id=set_pending_game_id
@@ -470,9 +427,15 @@ fn DashboardPanel(
     set_source_name: WriteSignal<String>,
     on_sync: impl Fn(leptos::ev::MouseEvent) + 'static,
     on_load: impl Fn(leptos::ev::MouseEvent) + 'static,
+    sync_loading: ReadSignal<bool>,
+    load_loading: ReadSignal<bool>,
 ) -> impl IntoView {
     let completed_shards = move || {
-        filesets.get().iter().filter(|f| f.status == "complete").count()
+        filesets
+            .get()
+            .iter()
+            .filter(|f| f.status == "complete")
+            .count()
     };
 
     view! {
@@ -598,8 +561,20 @@ fn DashboardPanel(
                     </div>
                 </div>
                 <div class="actions">
-                    <button on:click=on_sync>"Sync catalog"</button>
-                    <button class="primary" on:click=on_load>"Load full year"</button>
+                    <button on:click=on_sync disabled=move || sync_loading.get()>
+                        {move || if sync_loading.get() {
+                            view! { <span><span class="loading-spinner"/>"Syncing…"</span> }.into_any()
+                        } else {
+                            view! { "Sync catalog" }.into_any()
+                        }}
+                    </button>
+                    <button class="primary" on:click=on_load disabled=move || load_loading.get()>
+                        {move || if load_loading.get() {
+                            view! { <span><span class="loading-spinner"/>"Starting…"</span> }.into_any()
+                        } else {
+                            view! { "Load full year" }.into_any()
+                        }}
+                    </button>
                 </div>
                 <p class="hint">"Target: ≥100,000 games/min ingest throughput"</p>
                 {move || {
@@ -659,6 +634,7 @@ fn DashboardPanel(
 
 #[component]
 fn GamesPanel(
+    selected_source: ReadSignal<Option<i32>>,
     pending_game_id: ReadSignal<Option<i64>>,
     pending_ply: ReadSignal<Option<usize>>,
     set_pending_game_id: WriteSignal<Option<i64>>,
@@ -685,6 +661,8 @@ fn GamesPanel(
     let (in_check, set_in_check) = signal(false);
     let (fen_collapsed, set_fen_collapsed) = signal(true);
     let (searched, set_searched) = signal(false);
+    let (analyze_loading, set_analyze_loading) = signal(false);
+    let (analyze_error, set_analyze_error) = signal(None::<String>);
 
     let update_check = move |fen_str: &str| {
         if let Ok(pos) = WasmPosition::from_fen(fen_str) {
@@ -716,9 +694,10 @@ fn GamesPanel(
         if reset {
             set_offset.set(0);
         }
+        let sid = selected_source.get_untracked();
         set_search_loading.set(true);
         leptos::task::spawn_local(async move {
-            match api::fetch_games(Some(&p), None, next_offset, GAMES_PAGE_SIZE).await {
+            match api::fetch_games(Some(&p), sid, next_offset, GAMES_PAGE_SIZE).await {
                 Ok(page) => {
                     if reset {
                         set_games.set(page.games);
@@ -864,13 +843,27 @@ fn GamesPanel(
         }
     });
 
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        match ev.key().as_str() {
-            "ArrowLeft" => step_back(),
-            "ArrowRight" => step_forward(),
-            "f" | "F" => flip_board(),
-            _ => {}
-        }
+    let on_keydown = move |ev: leptos::ev::KeyboardEvent| match ev.key().as_str() {
+        "ArrowLeft" => step_back(),
+        "ArrowRight" => step_forward(),
+        "f" | "F" => flip_board(),
+        _ => {}
+    };
+
+    let run_analyze = move |_| {
+        let id = match selected.get() {
+            Some(id) => id,
+            None => return,
+        };
+        set_analyze_loading.set(true);
+        set_analyze_error.set(None);
+        leptos::task::spawn_local(async move {
+            match api::analyze_game(id, 12).await {
+                Ok(_) => load_game(id, None),
+                Err(e) => set_analyze_error.set(Some(e)),
+            }
+            set_analyze_loading.set(false);
+        });
     };
 
     view! {
@@ -1004,6 +997,25 @@ fn GamesPanel(
                     </span>
                     <button class="icon-btn" on:click=move |_| step_forward() title="Next move (→)">"▶"</button>
                 </div>
+                {move || {
+                    let eval_cp = detail.get().and_then(|d| {
+                        let idx = ply_idx.get();
+                        if idx == 0 {
+                            d.plies.first().and_then(|p| p.eval_before)
+                        } else {
+                            d.plies.get(idx.saturating_sub(1)).and_then(|p| p.eval_after)
+                        }
+                    });
+                    eval_cp.map(|cp| {
+                        let pct = ((cp as f32 + 800.0) / 1600.0).clamp(0.0, 1.0) * 100.0;
+                        view! {
+                            <div class="eval-bar">
+                                <div class="eval-bar-black" style:width=format!("{:.1}%", 100.0 - pct)></div>
+                                <span class="eval-label mono">{format!("{cp:+}")}</span>
+                            </div>
+                        }
+                    })
+                }}
                 <div class="fen-toggle" style="width: 100%; max-width: 520px; text-align: center;">
                     <button class="text-btn" on:click=move |_| set_fen_collapsed.update(|c| *c = !*c)>
                         {move || if fen_collapsed.get() { "Show FEN" } else { "Hide FEN" }}
@@ -1035,6 +1047,35 @@ fn GamesPanel(
                                 </h2>
                                 <p class="result-badge">{d.result.clone()}</p>
                                 {d.event.clone().map(|e| view! { <p class="event">{e}</p> })}
+                                {d.analysis.clone().map(|a| view! {
+                                    <div class="analysis-summary">
+                                        <p class="mono">
+                                            "Accuracy: "
+                                            <span class="acc-white">{format_accuracy(a.accuracy_white)}</span>
+                                            " / "
+                                            <span class="acc-black">{format_accuracy(a.accuracy_black)}</span>
+                                        </p>
+                                        <p class="mono" style="color: var(--muted); font-size: 0.82rem;">
+                                            {format!("Status: {} · Blunders: {} / {}",
+                                                a.status,
+                                                a.blunders_white.unwrap_or(0),
+                                                a.blunders_black.unwrap_or(0)
+                                            )}
+                                        </p>
+                                    </div>
+                                })}
+                                <button class="chip-btn" style="margin-bottom: 0.75rem;"
+                                    on:click=run_analyze
+                                    disabled=move || analyze_loading.get() || selected.get().is_none()>
+                                    {move || if analyze_loading.get() {
+                                        view! { <span><span class="loading-spinner"/>"Analyzing…"</span> }.into_any()
+                                    } else {
+                                        view! { "Analyze game" }.into_any()
+                                    }}
+                                </button>
+                                {analyze_error.get().map(|e| view! {
+                                    <div class="toast">{e}</div>
+                                })}
                             </div>
                             <h3>"Move list"</h3>
                             <ul class="movetext">
@@ -1047,13 +1088,22 @@ fn GamesPanel(
                                 </li>
                                 {d.plies.iter().enumerate().map(|(i, p)| {
                                     let ply_num = i + 1;
+                                    let class_name = p.move_class.as_deref().map(move_class_css).unwrap_or("");
+                                    let class_label = p.move_class.as_deref().map(move_class_label).unwrap_or("");
                                     view! {
                                         <li
                                             class:active=move || ply_idx.get() == ply_num && !exploratory.get()
+                                            class=class_name
                                             on:click=move |_| go_to_ply(ply_num)
                                         >
                                             <span class="move-num">{ply_num}</span>
                                             <span>{p.san.clone()}</span>
+                                            {(!class_label.is_empty()).then(|| view! {
+                                                <span class="move-tag">{class_label}</span>
+                                            })}
+                                            {p.cp_loss.map(|loss| view! {
+                                                <span class="move-loss mono">{format!("+{loss}")}</span>
+                                            })}
                                         </li>
                                     }
                                 }).collect_view()}
@@ -1094,6 +1144,7 @@ fn ExplorerPanel(
     let (pos_loading, set_pos_loading) = signal(false);
     let (pos_error, set_pos_error) = signal(None::<String>);
     let (fen_collapsed, set_fen_collapsed) = signal(false);
+    let (debounced_fen, set_debounced_fen) = signal(gambit_db_wasm::start_fen());
 
     let update_check = move |fen_str: &str| {
         if let Ok(pos) = WasmPosition::from_fen(fen_str) {
@@ -1103,6 +1154,14 @@ fn ExplorerPanel(
 
     Effect::new(move |_| {
         let f = fen.get();
+        leptos::task::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(300).await;
+            set_debounced_fen.set(f);
+        });
+    });
+
+    Effect::new(move |_| {
+        let f = debounced_fen.get();
         set_pos_offset.set(0);
         set_hash_error.set(None);
         if let Some(h) = fen_hash_local(&f) {

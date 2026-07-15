@@ -1,116 +1,97 @@
-//! HTTP client for the Gambit Studio API.
+//! gRPC client for the Gambit Studio API (grpc-web).
 
-use crate::api_types::{
-    BenchResponse, FilesetView, GameDetail, GamesPage, HashFromFenResponse, HealthResponse,
-    JobStarted, JobStatus, OpeningMoveStat, PositionGamesPage, SourceDetail, SourceListItem,
-    SyncResponse,
+use crate::grpc_web::{server_streaming, unary};
+use gambit_proto::{
+    BenchResponse, Empty, GameDetail, GamesByPositionRequest, GamesPage, GetActiveJobRequest,
+    GetGameRequest, GetSourceSummaryRequest, HashFromFenRequest,
+    HashFromFenResponse, HealthResponse, JobStarted, JobStatus, ListFilesetsRequest,
+    ListFilesetsResponse, ListSourcesResponse, LoadYearRequest, OpeningStatsRequest,
+    OpeningStatsResponse, OptionalJobStatus,
+    PositionGamesPage, SearchGamesRequest, SourceDetail, SyncCatalogRequest, SyncCatalogResponse,
+    WatchJobRequest,
 };
-use gloo_net::http::Request;
-
-fn api_base() -> String {
-    option_env!("GAMBIT_STUDIO_API")
-        .unwrap_or("http://127.0.0.1:8080")
-        .to_string()
-}
-
-async fn response_text(resp: gloo_net::http::Response) -> Result<String, String> {
-    resp.text().await.map_err(|e| e.to_string())
-}
-
-fn api_error(status: u16, body: &str) -> String {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-            return err.to_string();
-        }
-    }
-    if body.is_empty() {
-        format!("HTTP {status}")
-    } else {
-        body.to_string()
-    }
-}
-
-async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, String> {
-    let url = format!("{}{path}", api_base());
-    let resp = Request::get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let body = response_text(resp).await?;
-    if status >= 400 {
-        return Err(api_error(status, &body));
-    }
-    serde_json::from_str(&body).map_err(|e| format!("{e} (body: {body})"))
-}
-
-async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
-    path: &str,
-    body: &B,
-) -> Result<T, String> {
-    let url = format!("{}{path}", api_base());
-    let resp = Request::post(&url)
-        .header("Content-Type", "application/json")
-        .json(body)
-        .map_err(|e| e.to_string())?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let text = response_text(resp).await?;
-    if status >= 400 {
-        return Err(api_error(status, &text));
-    }
-    serde_json::from_str(&text).map_err(|e| format!("{e} (body: {text})"))
-}
 
 pub async fn fetch_health() -> Result<HealthResponse, String> {
-    get_json("/api/health").await
+    unary("Health", &Empty {}).await
 }
 
-pub async fn fetch_sources() -> Result<Vec<SourceListItem>, String> {
-    get_json("/api/sources").await
+pub async fn fetch_sources() -> Result<Vec<gambit_proto::SourceListItem>, String> {
+    let resp: ListSourcesResponse = unary("ListSources", &Empty {}).await?;
+    Ok(resp.sources)
 }
 
 pub async fn fetch_source_detail(id: i32) -> Result<SourceDetail, String> {
-    get_json(&format!("/api/sources/{id}/summary")).await
+    unary(
+        "GetSourceSummary",
+        &GetSourceSummaryRequest { source_id: id },
+    )
+    .await
 }
 
-pub async fn fetch_filesets_by_id(source_id: i32) -> Result<Vec<FilesetView>, String> {
-    get_json(&format!("/api/filesets?source_id={source_id}")).await
+pub async fn fetch_filesets_by_name(
+    source_name: &str,
+) -> Result<Vec<gambit_proto::FilesetView>, String> {
+    let resp: ListFilesetsResponse = unary(
+        "ListFilesets",
+        &ListFilesetsRequest {
+            source_id: None,
+            source_name: Some(source_name.to_string()),
+        },
+    )
+    .await?;
+    Ok(resp.filesets)
 }
 
-pub async fn fetch_filesets_by_name(source_name: &str) -> Result<Vec<FilesetView>, String> {
-    let enc = urlencoding_encode(source_name);
-    get_json(&format!("/api/filesets?source_name={enc}")).await
-}
-
-pub async fn sync_catalog(source: &str, year: i32) -> Result<SyncResponse, String> {
-    post_json(
-        "/api/filesets/sync",
-        &serde_json::json!({ "source": source, "year": year }),
+pub async fn sync_catalog(source: &str, year: i32) -> Result<SyncCatalogResponse, String> {
+    unary(
+        "SyncCatalog",
+        &SyncCatalogRequest {
+            source: source.to_string(),
+            year,
+        },
     )
     .await
 }
 
 pub async fn load_year(source: &str, year: i32) -> Result<JobStarted, String> {
-    post_json(
-        "/api/filesets/load-year",
-        &serde_json::json!({ "source": source, "year": year }),
+    unary(
+        "LoadYear",
+        &LoadYearRequest {
+            source: source.to_string(),
+            year,
+        },
     )
     .await
 }
 
 pub async fn fetch_active_job(source_name: &str, year: i32) -> Result<Option<JobStatus>, String> {
-    let enc = urlencoding_encode(source_name);
-    get_json(&format!(
-        "/api/jobs/active?source_name={enc}&year={year}"
-    ))
-    .await
+    let resp: OptionalJobStatus = unary(
+        "GetActiveJob",
+        &GetActiveJobRequest {
+            source_name: Some(source_name.to_string()),
+            year: Some(year),
+        },
+    )
+    .await?;
+    Ok(resp.job)
 }
 
-pub async fn fetch_job(job_id: u64) -> Result<JobStatus, String> {
-    get_json(&format!("/api/jobs/{job_id}")).await
+pub async fn watch_job(
+    job_id: u64,
+    source_name: Option<String>,
+    year: Option<i32>,
+    mut on_status: impl FnMut(JobStatus) -> bool,
+) -> Result<(), String> {
+    server_streaming(
+        "WatchJob",
+        &WatchJobRequest {
+            job_id,
+            source_name,
+            year,
+        },
+        |status| on_status(status),
+    )
+    .await
 }
 
 pub async fn fetch_games(
@@ -119,31 +100,36 @@ pub async fn fetch_games(
     offset: i64,
     limit: i64,
 ) -> Result<GamesPage, String> {
-    let mut path = format!("/api/games?offset={offset}&limit={limit}");
-    if let Some(sid) = source_id {
-        path.push_str(&format!("&source_id={sid}"));
-    }
-    if let Some(p) = player.filter(|s| !s.is_empty()) {
-        path.push_str(&format!("&player={}", urlencoding_encode(p)));
-    }
-    get_json(&path).await
+    unary(
+        "SearchGames",
+        &SearchGamesRequest {
+            player: player.map(str::to_string),
+            source_id,
+            offset,
+            limit,
+        },
+    )
+    .await
 }
 
 pub async fn fetch_game(id: i64) -> Result<GameDetail, String> {
-    get_json(&format!("/api/games/{id}")).await
+    unary("GetGame", &GetGameRequest { game_id: id }).await
 }
 
 pub async fn hash_from_fen(fen: &str) -> Result<i64, String> {
-    let resp: HashFromFenResponse = post_json(
-        "/api/positions/hash",
-        &serde_json::json!({ "fen": fen }),
+    let resp: HashFromFenResponse = unary(
+        "HashFromFen",
+        &HashFromFenRequest {
+            fen: fen.to_string(),
+        },
     )
     .await?;
     Ok(resp.hash)
 }
 
-pub async fn fetch_opening_stats(hash: i64) -> Result<Vec<OpeningMoveStat>, String> {
-    get_json(&format!("/api/opening/{hash}")).await
+pub async fn fetch_opening_stats(hash: i64) -> Result<Vec<gambit_proto::OpeningMoveStat>, String> {
+    let resp: OpeningStatsResponse = unary("OpeningStats", &OpeningStatsRequest { hash }).await?;
+    Ok(resp.stats)
 }
 
 pub async fn fetch_games_by_position(
@@ -151,24 +137,25 @@ pub async fn fetch_games_by_position(
     offset: i64,
     limit: i64,
 ) -> Result<PositionGamesPage, String> {
-    get_json(&format!(
-        "/api/games/by-position/{hash}?offset={offset}&limit={limit}"
-    ))
+    unary(
+        "GamesByPosition",
+        &GamesByPositionRequest {
+            hash,
+            offset,
+            limit,
+        },
+    )
     .await
 }
 
 pub async fn run_bench() -> Result<BenchResponse, String> {
-    post_json("/api/bench/queries", &serde_json::json!({})).await
+    unary("RunBench", &Empty {}).await
 }
 
-fn urlencoding_encode(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            ' ' => "%20".to_string(),
-            '%' => "%25".to_string(),
-            '&' => "%26".to_string(),
-            _ if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' => c.to_string(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+pub async fn analyze_game(game_id: i64, depth: u32) -> Result<gambit_proto::AnalyzeGameResponse, String> {
+    unary(
+        "AnalyzeGame",
+        &gambit_proto::AnalyzeGameRequest { game_id, depth },
+    )
+    .await
 }

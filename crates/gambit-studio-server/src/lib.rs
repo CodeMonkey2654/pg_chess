@@ -1,12 +1,8 @@
-//! Gambit Studio REST API library.
+//! Gambit Studio gRPC API library.
 
 mod db;
-mod jobs;
+mod grpc;
 mod pool;
-mod routes;
-mod types;
 
-pub use jobs::JobManager;
+pub use grpc::StudioServer;
 pub use pool::PgPool;
-pub use routes::{router, AppState};
-pub use types::*;

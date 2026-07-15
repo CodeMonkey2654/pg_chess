@@ -5,3 +5,4 @@ dist = "dist"
 [serve]
 addresses = ["127.0.0.1"]
 port = 8081
+# Bind only localhost — avoids Windows multi-hostname port conflicts on corp DNS suffixes.
